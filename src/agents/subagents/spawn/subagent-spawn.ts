@@ -297,8 +297,6 @@ export async function spawnSubagentDirect(
 
     let retainOnSessionKeep = false;
     let attachmentsReceipt: SpawnSubagentResult["attachments"];
-    let attachmentAbsDir: string | undefined;
-    let attachmentRootDir: string | undefined;
     let attachmentWorkspaceDir: string | undefined;
     let attachmentRelDir: string | undefined;
 
@@ -320,8 +318,6 @@ export async function spawnSubagentDirect(
     if (materializedAttachments?.status === "ok") {
       retainOnSessionKeep = materializedAttachments.retainOnSessionKeep;
       attachmentsReceipt = materializedAttachments.receipt;
-      attachmentAbsDir = materializedAttachments.absDir;
-      attachmentRootDir = materializedAttachments.rootDir;
       attachmentWorkspaceDir = materializedAttachments.workspaceDir;
       attachmentRelDir = materializedAttachments.receipt.relDir;
       childSystemPrompt = `${childSystemPrompt}\n\n${materializedAttachments.systemPromptSuffix}`;
@@ -564,8 +560,8 @@ export async function spawnSubagentDirect(
           queued: params.collect === true,
           taskRowOwnership,
           ...(gatewayContextResolver ? { gatewayContextResolver } : {}),
-          attachmentsDir: attachmentAbsDir,
-          attachmentsRootDir: attachmentRootDir,
+          attachmentWorkspaceDir,
+          attachmentRelDir,
           retainAttachmentsOnKeep: retainOnSessionKeep,
         };
       },
