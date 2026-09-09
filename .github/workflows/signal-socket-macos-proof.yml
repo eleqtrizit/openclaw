@@ -1,0 +1,50 @@
+name: Signal socket macOS boundary proof
+
+on:
+  push:
+    branches: [signal-socket-macos-proof-143511]
+
+permissions:
+  contents: read
+
+jobs:
+  socket-boundary:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: eleqtrizit/openclaw
+          ref: a61f020d983f5ccd37ebadc2f26c4973f60b21e1
+          persist-credentials: false
+
+      - name: Verify candidate and native platform
+        shell: bash
+        env:
+          EXPECTED_SHA: a61f020d983f5ccd37ebadc2f26c4973f60b21e1
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(uname -s)" = Darwin
+          git rev-parse HEAD
+          sw_vers
+          uname -m
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          cache-mode: "off"
+          install-bun: "false"
+
+      - name: Run native socket boundary tests
+        shell: bash
+        env:
+          OPENCLAW_VITEST_MAX_WORKERS: "2"
+        run: |
+          set -euo pipefail
+          pnpm test \
+            extensions/signal/src/client-unix.test.ts \
+            extensions/signal/src/socket-path.test.ts \
+            extensions/signal/src/daemon.test.ts \
+            extensions/signal/src/monitor.tool-result.autostart.test.ts
