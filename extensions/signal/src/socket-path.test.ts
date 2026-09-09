@@ -5,11 +5,7 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  assertSignalSocketEndpoint,
-  prepareSignalSocketPath,
-  validateSignalSocketPath,
-} from "./socket-path.js";
+import { assertSignalSocketEndpoint, prepareSignalSocketPath } from "./socket-path.js";
 
 describe.skipIf(process.platform === "win32")("Signal socket filesystem boundary", () => {
   let root: string;
@@ -63,7 +59,7 @@ describe.skipIf(process.platform === "win32")("Signal socket filesystem boundary
     const parent = path.join(root, "private");
     await mkdir(parent, { mode: 0o700 });
     await chmod(root, 0o777);
-    await expect(validateSignalSocketPath(path.join(parent, "rpc"))).rejects.toThrow("ancestors");
+    await expect(assertSignalSocketEndpoint(path.join(parent, "rpc"))).rejects.toThrow("ancestors");
   });
 
   it("preserves existing files and rejects them as socket endpoints", async () => {

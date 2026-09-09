@@ -9,7 +9,7 @@ import { signalCheck, signalRpcRequest, streamSignalEvents } from "./client.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) {
+  for (const cleanup of cleanups.splice(0).toReversed()) {
     await cleanup();
   }
 });
@@ -39,7 +39,9 @@ async function serve(onRequest: (request: Record<string, unknown>, socket: net.S
     for (const socket of sockets) {
       socket.destroy();
     }
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
     await rm(dir, { recursive: true, force: true });
   });
   return { baseUrl: pathToFileURL(socketPath).href.replace(/^file:/, "unix:"), dir };

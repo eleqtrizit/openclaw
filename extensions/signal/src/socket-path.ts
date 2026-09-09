@@ -49,7 +49,7 @@ async function validateDirectories(directory: string, uid: number, privateParent
 }
 
 /** Validate the OS-user boundary before every connection, not only at startup. */
-export async function validateSignalSocketPath(socketPath: string): Promise<void> {
+async function validateSignalSocketPath(socketPath: string): Promise<void> {
   const uid = socketOwner(socketPath);
   await validateDirectories(path.dirname(socketPath), uid, true);
 }
