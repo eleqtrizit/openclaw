@@ -145,7 +145,12 @@ export async function streamSignalUnixEvents(params: {
   onEvent: (event: { event?: string; data?: string; id?: string }) => unknown;
   onStreamOpen?: () => void;
 }): Promise<void> {
-  const connection = await openSocket(params, params.abortSignal);
+  // The monitor uses zero for unlimited stream idle time, not a 1 ms handshake.
+  // Bound subscription establishment separately; ready() clears it after acknowledgement.
+  const connection = await openSocket(
+    { ...params, timeoutMs: params.timeoutMs === 0 ? DEFAULT_TIMEOUT_MS : params.timeoutMs },
+    params.abortSignal,
+  );
   const id = randomUUID();
   let subscribed = false;
   let subscription: number | undefined;

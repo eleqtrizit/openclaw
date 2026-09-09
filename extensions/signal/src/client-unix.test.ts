@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { signalCheck, signalRpcRequest, streamSignalEvents } from "./client.js";
+import { runSignalSseLoop } from "./sse-reconnect.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -154,6 +155,38 @@ describe.skipIf(process.platform === "win32")("Signal UNIX transport", () => {
       streamSignalEvents({ baseUrl, timeoutMs: 30, onStreamOpen: opened, onEvent: () => {} }),
     ).rejects.toThrow(/deadline/);
     expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("receives after a delayed subscription through the monitor's zero-timeout reconnect path", async () => {
+    const controller = new AbortController();
+    const events: unknown[] = [];
+    const statusSink = vi.fn();
+    const error = vi.fn(() => controller.abort());
+    const payload = { envelope: { dataMessage: { message: "delayed" } } };
+    const { baseUrl } = await serve((request, socket) => {
+      expect(request.method).toBe("subscribeReceive");
+      const timer = setTimeout(() => {
+        socket.write(response(request.id, 7));
+        socket.write(
+          `${JSON.stringify({ jsonrpc: "2.0", method: "receive", params: { subscription: 7, result: payload } })}\n`,
+        );
+      }, 30);
+      socket.once("close", () => clearTimeout(timer));
+    });
+    await runSignalSseLoop({
+      baseUrl,
+      timeoutMs: 0,
+      abortSignal: controller.signal,
+      runtime: { log: vi.fn(), error, exit: vi.fn() },
+      statusSink,
+      onEvent: (event) => {
+        events.push(event);
+        controller.abort();
+      },
+    });
+    expect(error).not.toHaveBeenCalled();
+    expect(statusSink).toHaveBeenCalledWith(expect.objectContaining({ connected: true }));
+    expect(events).toEqual([{ event: "receive", data: JSON.stringify(payload) }]);
   });
 
   it("closes a subscribed socket when the event consumer throws", async () => {
