@@ -206,6 +206,14 @@ OpenClaw subagent sessions still own execution. One dispatch pass:
 Workers get bounded card context plus the claim token needed to heartbeat,
 complete, or block the card through the Workboard tools.
 
+Workboard-dispatched workers can mutate only the card linked to their runtime-owned
+dispatch session. Claim ownership or a valid token does not widen that target scope.
+They can still decompose their assigned card, and direct child creation/linking is
+allowed when the child explicitly records and links back to that assigned card.
+Read-only tools remain available. Ordinary operators and non-dispatched agents keep
+the claim behavior described above, while dispatched workers cannot run board-wide
+mutation and recovery operations.
+
 Workspace paths follow the caller's existing filesystem authority:
 
 - Gateway clients with `operator.write` can use configured agent workspaces.

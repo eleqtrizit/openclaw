@@ -3,8 +3,13 @@ import type { WorkboardCard } from "@openclaw/workboard-contract";
 import { jsonResult, readStringParam } from "openclaw/plugin-sdk/core";
 import type { AnyAgentTool, OpenClawPluginToolContext } from "openclaw/plugin-sdk/plugin-entry";
 import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
+import { asOptionalRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { Type } from "typebox";
 import { redactClaimToken } from "./card-redaction.js";
+import {
+  isWorkboardDispatchedWorkerSessionKey,
+  workboardCardMatchesLifecycleLink,
+} from "./session-link.js";
 import type { WorkboardStore } from "./store.js";
 import {
   cardIdField,
@@ -27,6 +32,84 @@ function contextOwner(ctx: OpenClawPluginToolContext | undefined): string {
 function canMutateCard(card: WorkboardCard, ownerId: string, token?: string): boolean {
   const claim = card.metadata?.claim;
   return !claim || claim.ownerId === ownerId || safeEqualSecret(token, claim.token);
+}
+
+type DispatchedWorkerBinding = {
+  cardId?: string;
+  sessionKey?: string;
+};
+
+const DISPATCHED_WORKER_DENIED_TOOL_NAMES = new Set([
+  "workboard_board_create",
+  "workboard_board_archive",
+  "workboard_board_delete",
+  "workboard_dispatch",
+]);
+
+function readDispatchedWorkerBinding(
+  context: OpenClawPluginToolContext | undefined,
+): DispatchedWorkerBinding | undefined {
+  const workboardBindingRecord = asOptionalRecord(context?.toolBindings?.workboard);
+  const dispatchedCardId = workboardBindingRecord?.dispatchedCardId;
+  const cardId =
+    typeof dispatchedCardId === "string" && dispatchedCardId.trim()
+      ? dispatchedCardId.trim()
+      : undefined;
+  const sessionKey = isWorkboardDispatchedWorkerSessionKey(context?.sessionKey)
+    ? context?.sessionKey
+    : undefined;
+  return cardId || sessionKey ? { cardId, sessionKey } : undefined;
+}
+
+function dispatchedWorkerTargetError(): Error {
+  return new Error("dispatched Workboard workers may mutate only their assigned card.");
+}
+
+async function requireDispatchedWorkerTarget(
+  store: WorkboardStore,
+  cardId: string,
+  binding: DispatchedWorkerBinding | undefined,
+): Promise<WorkboardCard | undefined> {
+  if (!binding) {
+    return undefined;
+  }
+  if (binding.cardId && binding.cardId !== cardId) {
+    throw dispatchedWorkerTargetError();
+  }
+  const card = await store.get(cardId);
+  if (!card) {
+    throw new Error(`card not found: ${cardId}`);
+  }
+  if (
+    binding.sessionKey &&
+    !workboardCardMatchesLifecycleLink(card, { sessionKey: binding.sessionKey })
+  ) {
+    throw dispatchedWorkerTargetError();
+  }
+  return card;
+}
+
+async function resolveDispatchedWorkerCard(
+  store: WorkboardStore,
+  binding: DispatchedWorkerBinding,
+): Promise<WorkboardCard> {
+  if (binding.cardId) {
+    const card = await requireDispatchedWorkerTarget(store, binding.cardId, binding);
+    if (card) {
+      return card;
+    }
+  }
+  const matches = (await store.list()).filter((card) =>
+    workboardCardMatchesLifecycleLink(card, { sessionKey: binding.sessionKey }),
+  );
+  if (matches.length !== 1) {
+    throw new Error("dispatched Workboard worker binding does not identify exactly one card.");
+  }
+  const [match] = matches;
+  if (!match) {
+    throw new Error("dispatched Workboard worker binding does not identify a card.");
+  }
+  return match;
 }
 
 function readParentIds(value: unknown): string[] {
@@ -63,8 +146,11 @@ async function requireScopedCard(
   cardId: string,
   ownerId: string,
   token?: string,
+  dispatchedWorkerBinding?: DispatchedWorkerBinding,
 ): Promise<WorkboardCard> {
-  const card = await store.get(cardId);
+  const card =
+    (await requireDispatchedWorkerTarget(store, cardId, dispatchedWorkerBinding)) ??
+    (await store.get(cardId));
   if (!card) {
     throw new Error(`card not found: ${cardId}`);
   }
@@ -172,9 +258,10 @@ export function createWorkboardTools(params: {
 }): AnyAgentTool[] {
   const { store } = params;
   const ownerId = contextOwner(params.context);
+  const dispatchedWorkerBinding = readDispatchedWorkerBinding(params.context);
   const readScopedCardToolParams = async (rawParams: unknown): Promise<WorkboardToolCardParams> => {
     const input = readCardToolParams(rawParams, ownerId);
-    await requireScopedCard(store, input.id, ownerId, input.token);
+    await requireScopedCard(store, input.id, ownerId, input.token, dispatchedWorkerBinding);
     return input;
   };
   const readClaimedCardToolParams = async (
@@ -272,7 +359,15 @@ export function createWorkboardTools(params: {
       }),
       execute: async (_toolCallId, rawParams) => {
         const record = rawParams as Record<string, unknown>;
-        readParentIds(record.parents);
+        const parents = readParentIds(record.parents);
+        if (dispatchedWorkerBinding) {
+          const boundCard = await resolveDispatchedWorkerCard(store, dispatchedWorkerBinding);
+          if (record.createdByCardId !== boundCard.id || !parents.includes(boundCard.id)) {
+            throw new Error(
+              "dispatched Workboard workers may create only children explicitly linked to their assigned card.",
+            );
+          }
+        }
         return jsonResult({
           card: redactClaimToken(
             await store.create(record, { ownerId, token: record.token as string | undefined }),
@@ -297,6 +392,19 @@ export function createWorkboardTools(params: {
         const parentId = readStringParam(record, "parentId", { required: true });
         const childId = readStringParam(record, "childId", { required: true });
         const token = record.token as string | undefined;
+        if (dispatchedWorkerBinding) {
+          const parent = await requireDispatchedWorkerTarget(
+            store,
+            parentId,
+            dispatchedWorkerBinding,
+          );
+          const child = await store.get(childId);
+          if (!parent || child?.metadata?.automation?.createdByCardId !== parent.id) {
+            throw new Error(
+              "dispatched Workboard workers may link only children derived from their assigned card.",
+            );
+          }
+        }
         return jsonResult({
           card: redactClaimToken(await store.linkCards(parentId, childId, { ownerId, token })),
         });
@@ -333,6 +441,7 @@ export function createWorkboardTools(params: {
       execute: async (_toolCallId, rawParams) => {
         const record = rawParams as Record<string, unknown>;
         const id = readStringParam(record, "id", { required: true });
+        await requireDispatchedWorkerTarget(store, id, dispatchedWorkerBinding);
         const claimed = await store.claim(id, {
           ownerId,
           ttlSeconds: record.ttlSeconds,
@@ -556,7 +665,8 @@ export function createWorkboardTools(params: {
     ...createWorkboardOrchestrationTools({
       store,
       ownerId,
-      requireScopedCard,
+      requireScopedCard: (targetStore, cardId, targetOwnerId, token) =>
+        requireScopedCard(targetStore, cardId, targetOwnerId, token, dispatchedWorkerBinding),
       readScopedCardToolParams,
       readClaimedCardToolParams,
       runScopedCardMutation,
@@ -565,7 +675,15 @@ export function createWorkboardTools(params: {
   ];
   for (const tool of tools) {
     const execute = tool.execute;
-    tool.execute = (...args) => store.runOperation(() => execute(...args));
+    tool.execute = (...args) =>
+      store.runOperation(async () => {
+        if (dispatchedWorkerBinding && DISPATCHED_WORKER_DENIED_TOOL_NAMES.has(tool.name)) {
+          throw new Error(
+            "dispatched Workboard workers cannot run board-wide mutation operations.",
+          );
+        }
+        return await execute(...args);
+      });
   }
   return tools;
 }

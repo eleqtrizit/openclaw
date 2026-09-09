@@ -17,6 +17,13 @@ export function workboardSessionKeyForCard(card: WorkboardCard): string {
   return card.agentId ? `agent:${sanitizeSessionSegment(card.agentId, "agent")}:${suffix}` : suffix;
 }
 
+export function isWorkboardDispatchedWorkerSessionKey(sessionKey: string | undefined): boolean {
+  return Boolean(
+    sessionKey &&
+    (sessionKey.startsWith("subagent:workboard-") || sessionKey.includes(":subagent:workboard-")),
+  );
+}
+
 function sessionKeyMatchesCard(candidate: string, cardKey: string): boolean {
   return (
     candidate === cardKey ||
