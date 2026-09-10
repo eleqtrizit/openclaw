@@ -16,12 +16,11 @@ export function assertDispatchedMutationScope(
     return;
   }
   const isAssignedCard = card.id === dispatchedCardId;
-  const isDerivedChild = card.metadata?.automation?.createdByCardId === dispatchedCardId;
-  if (!isAssignedCard && !isDerivedChild) {
+  if (!isAssignedCard) {
     throw new Error("dispatched Workboard workers may mutate only their assigned card.");
   }
   const dispatchedSessionKey = normalizeOptionalString(scope.dispatchedSessionKey);
-  if (!isAssignedCard || !dispatchedSessionKey) {
+  if (!dispatchedSessionKey) {
     return;
   }
   const currentSessionKey = cardSessionKey(card);

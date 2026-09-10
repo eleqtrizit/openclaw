@@ -16,7 +16,6 @@ import type {
   PersistedWorkboardNotificationSubscription,
   WorkboardBoardCardAggregate,
   WorkboardCardStore,
-  WorkboardCardWriteAuthority,
   WorkboardKeyedStore,
 } from "./persistence-types.js";
 import { normalizeAutomationPatch, normalizeCardAutomation } from "./store-automation.js";
@@ -621,13 +620,8 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       ...(completedAt ? { completedAt } : {}),
       ...(!metadataIsEmpty(syncedMetadata) ? { metadata: syncedMetadata } : {}),
     };
-    const authority = await this.derivedWriteAuthority(card, scope);
-    if ((options.insertIfAbsent || authority) && this.cardStore) {
-      const inserted = await this.cardStore.registerIfAbsent(
-        card.id,
-        { version: 1, card },
-        authority,
-      );
+    if (options.insertIfAbsent && this.cardStore) {
+      const inserted = await this.cardStore.registerIfAbsent(card.id, { version: 1, card });
       if (!inserted) {
         const winner = await this.get(card.id);
         if (!winner) {
@@ -712,25 +706,6 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
     );
   }
 
-  private async derivedWriteAuthority(
-    card: WorkboardCard,
-    scope: WorkboardMutationScope | undefined,
-  ): Promise<WorkboardCardWriteAuthority | undefined> {
-    const parentId = normalizeOptionalString(scope?.dispatchedCardId);
-    if (!parentId || parentId === card.id) {
-      return undefined;
-    }
-    assertDispatchedMutationScope(card, scope);
-    const parent = await this.get(parentId);
-    if (!parent) {
-      throw new Error("dispatched Workboard worker's assigned card no longer exists.");
-    }
-    assertCanMutateClaimedCard(parent, scope);
-    // The SQLite writer checks this parent revision inside the same transaction
-    // as the child write. Child provenance alone is not current authority.
-    return { cardId: parent.id, expectedUpdatedAt: parent.updatedAt };
-  }
-
   protected async updateCard(
     id: string,
     patch: WorkboardCardPatch,
@@ -745,7 +720,6 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
     } else {
       assertCanMutateClaimedCard(existing, options.mutationScope);
     }
-    const authority = await this.derivedWriteAuthority(existing, options.mutationScope);
     if (
       options.expectedUpdatedAt !== undefined &&
       existing.updatedAt !== options.expectedUpdatedAt
@@ -916,7 +890,6 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
           expectedUpdatedAt,
           options.ownerSlot.ownerId,
           options.ownerSlot.now,
-          authority,
         );
         if (result === "owner_busy") {
           throw new Error(`Owner ${options.ownerSlot.ownerId} already has active Workboard work.`);
@@ -931,7 +904,6 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
           next.id,
           { version: 1, card: next },
           expectedUpdatedAt,
-          authority,
         )
       ) {
         this.recordCardMutation(existing, next);

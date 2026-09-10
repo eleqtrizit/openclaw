@@ -208,11 +208,11 @@ complete, or block the card through the Workboard tools.
 
 Workboard-dispatched workers can mutate only the card linked to their runtime-owned
 dispatch session. Claim ownership or a valid token does not widen that target scope.
-They can still decompose their assigned card, and direct child creation/linking is
-allowed when the child explicitly records and links back to that assigned card.
-Read-only tools remain available. Ordinary operators and non-dispatched agents keep
-the claim behavior described above, while dispatched workers cannot run board-wide
-mutation and recovery operations.
+They cannot create, link, or decompose cards; those orchestration operations remain
+available to ordinary operators and non-dispatched agents. Read-only tools remain
+available. Ordinary operators and non-dispatched agents keep the claim behavior
+described above, while dispatched workers cannot run board-wide mutation and recovery
+operations.
 
 Workspace paths follow the caller's existing filesystem authority:
 

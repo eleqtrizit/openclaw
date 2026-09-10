@@ -113,7 +113,7 @@ describe("dispatched Workboard worker confinement", () => {
     ).resolves.toBeDefined();
   });
 
-  it("uses trusted explicit bindings and permits only derived child creation", async () => {
+  it("uses trusted explicit bindings and rejects card creation", async () => {
     const store = new WorkboardStore(createMemoryStore());
     const assigned = await linkDispatchedCard(
       store,
@@ -134,18 +134,14 @@ describe("dispatched Workboard worker confinement", () => {
     ).rejects.toThrow("only their assigned card");
     await expect(
       tools.get("workboard_create")?.execute("unrelated-create", { title: "Detached child" }),
-    ).rejects.toThrow("only children explicitly linked");
-
-    const created = payload(
-      await tools.get("workboard_create")?.execute("derived-create", {
+    ).rejects.toThrow("cannot create, link, decompose");
+    await expect(
+      tools.get("workboard_create")?.execute("derived-create", {
         title: "Derived child",
         parents: [assigned.id],
         createdByCardId: assigned.id,
       }),
-    ).card as { id: string };
-    await expect(store.get(created.id)).resolves.toMatchObject({
-      metadata: { automation: { createdByCardId: assigned.id } },
-    });
+    ).rejects.toThrow("cannot create, link, decompose");
   });
 
   it("rejects unrelated claimed-only lifecycle targets without side effects", async () => {
@@ -195,7 +191,7 @@ describe("dispatched Workboard worker confinement", () => {
     }
   });
 
-  it("rejects derived creation with an extra unrelated parent without side effects", async () => {
+  it("rejects derived creation without side effects", async () => {
     const store = new WorkboardStore(createMemoryStore());
     const assigned = await linkDispatchedCard(
       store,
@@ -216,14 +212,14 @@ describe("dispatched Workboard worker confinement", () => {
         createdByCardId: assigned.id,
         parents: [assigned.id, unrelated.id],
       }),
-    ).rejects.toThrow("only children explicitly linked");
+    ).rejects.toThrow("cannot create, link, decompose");
 
     await expect(store.list({})).resolves.toHaveLength(before.length);
     await expect(store.get(assigned.id)).resolves.toEqual(assignedBefore);
     await expect(store.get(unrelated.id)).resolves.toEqual(unrelatedBefore);
   });
 
-  it("preserves decomposition and links only children derived from the assigned card", async () => {
+  it("rejects link and decomposition without side effects", async () => {
     const store = new WorkboardStore(createMemoryStore());
     const assigned = await linkDispatchedCard(
       store,
@@ -240,33 +236,24 @@ describe("dispatched Workboard worker confinement", () => {
       sessionKey: workboardSessionKeyForCard(assigned),
     });
 
+    const before = await store.list({});
     await expect(
       tools.get("workboard_link")?.execute("link-derived", {
         parentId: assigned.id,
         childId: derived.id,
       }),
-    ).resolves.toBeDefined();
-    await expect(
-      tools.get("workboard_link")?.execute("link-unrelated", {
-        parentId: assigned.id,
-        childId: unrelated.id,
-      }),
-    ).rejects.toThrow("only children derived");
+    ).rejects.toThrow("cannot create, link, decompose");
 
-    const result = payload(
-      await tools.get("workboard_decompose")?.execute("decompose", {
+    await expect(
+      tools.get("workboard_decompose")?.execute("decompose", {
         id: assigned.id,
         completeParent: false,
         children: [{ title: "Decomposed child" }],
       }),
-    );
-    expect(result.children).toEqual([
-      expect.objectContaining({
-        metadata: expect.objectContaining({
-          automation: expect.objectContaining({ createdByCardId: assigned.id }),
-        }),
-      }),
-    ]);
+    ).rejects.toThrow("cannot create, link, decompose");
+
+    await expect(store.list({})).resolves.toEqual(before);
+    await expect(store.get(unrelated.id)).resolves.toEqual(unrelated);
   });
 
   it("rejects board-wide mutations while preserving read access", async () => {
@@ -284,7 +271,7 @@ describe("dispatched Workboard worker confinement", () => {
       tools.get("workboard_read")?.execute("read", { id: assigned.id }),
     ).resolves.toBeDefined();
     await expect(tools.get("workboard_dispatch")?.execute("dispatch", {})).rejects.toThrow(
-      "cannot run board-wide mutation",
+      "board-wide mutation operations",
     );
   });
 

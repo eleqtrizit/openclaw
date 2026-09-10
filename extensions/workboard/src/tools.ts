@@ -43,6 +43,9 @@ const DISPATCHED_WORKER_DENIED_TOOL_NAMES = new Set([
   "workboard_board_create",
   "workboard_board_archive",
   "workboard_board_delete",
+  "workboard_create",
+  "workboard_link",
+  "workboard_decompose",
   "workboard_dispatch",
 ]);
 
@@ -87,58 +90,6 @@ async function requireDispatchedWorkerTarget(
     throw dispatchedWorkerTargetError();
   }
   return card;
-}
-
-async function resolveDispatchedWorkerCard(
-  store: WorkboardStore,
-  binding: DispatchedWorkerBinding,
-): Promise<WorkboardCard> {
-  if (binding.cardId) {
-    const card = await requireDispatchedWorkerTarget(store, binding.cardId, binding);
-    if (card) {
-      return card;
-    }
-  }
-  const matches = (await store.list()).filter((card) =>
-    workboardCardMatchesLifecycleLink(card, { sessionKey: binding.sessionKey }),
-  );
-  if (matches.length !== 1) {
-    throw new Error("dispatched Workboard worker binding does not identify exactly one card.");
-  }
-  const [match] = matches;
-  if (!match) {
-    throw new Error("dispatched Workboard worker binding does not identify a card.");
-  }
-  return match;
-}
-
-function readParentIds(value: unknown): string[] {
-  if (value == null) {
-    return [];
-  }
-  const entries =
-    typeof value === "string" ? value.split(",") : Array.isArray(value) ? value : undefined;
-  if (!entries) {
-    throw new Error("parents must be an array or comma-separated string.");
-  }
-  const parents: string[] = [];
-  for (const entry of entries) {
-    if (typeof entry !== "string") {
-      throw new Error("parents must contain only strings.");
-    }
-    const parent = entry.trim();
-    if (!parent || parents.includes(parent)) {
-      continue;
-    }
-    if (parent.length > 120) {
-      throw new Error("parents must be 120 characters or fewer.");
-    }
-    parents.push(parent);
-    if (parents.length >= 20) {
-      break;
-    }
-  }
-  return parents;
 }
 
 async function requireScopedCard(
@@ -378,24 +329,10 @@ export function createWorkboardTools(params: {
       }),
       execute: async (_toolCallId, rawParams) => {
         const record = rawParams as Record<string, unknown>;
-        const parents = readParentIds(record.parents);
-        let scope: WorkboardToolMutationScope = {
+        const scope: WorkboardToolMutationScope = {
           ownerId,
           token: record.token as string | undefined,
         };
-        if (dispatchedWorkerBinding) {
-          const boundCard = await resolveDispatchedWorkerCard(store, dispatchedWorkerBinding);
-          if (
-            record.createdByCardId !== boundCard.id ||
-            parents.length !== 1 ||
-            parents[0] !== boundCard.id
-          ) {
-            throw new Error(
-              "dispatched Workboard workers may create only children explicitly linked to their assigned card.",
-            );
-          }
-          scope = dispatchedMutationScope(scope, boundCard, dispatchedWorkerBinding);
-        }
         return jsonResult({
           card: redactClaimToken(await store.create(record, scope)),
         });
@@ -418,21 +355,7 @@ export function createWorkboardTools(params: {
         const parentId = readStringParam(record, "parentId", { required: true });
         const childId = readStringParam(record, "childId", { required: true });
         const token = record.token as string | undefined;
-        let scope: WorkboardToolMutationScope = { ownerId, token };
-        if (dispatchedWorkerBinding) {
-          const parent = await requireDispatchedWorkerTarget(
-            store,
-            parentId,
-            dispatchedWorkerBinding,
-          );
-          const child = await store.get(childId);
-          if (!parent || child?.metadata?.automation?.createdByCardId !== parent.id) {
-            throw new Error(
-              "dispatched Workboard workers may link only children derived from their assigned card.",
-            );
-          }
-          scope = dispatchedMutationScope(scope, parent, dispatchedWorkerBinding);
-        }
+        const scope: WorkboardToolMutationScope = { ownerId, token };
         return jsonResult({
           card: redactClaimToken(await store.linkCards(parentId, childId, scope)),
         });
@@ -704,7 +627,7 @@ export function createWorkboardTools(params: {
       store.runOperation(async () => {
         if (dispatchedWorkerBinding && DISPATCHED_WORKER_DENIED_TOOL_NAMES.has(tool.name)) {
           throw new Error(
-            "dispatched Workboard workers cannot run board-wide mutation operations.",
+            "dispatched Workboard workers cannot create, link, decompose, or run board-wide mutation operations.",
           );
         }
         return await execute(...args);
