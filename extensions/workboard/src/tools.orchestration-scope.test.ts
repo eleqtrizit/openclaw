@@ -109,4 +109,41 @@ describe("Workboard dispatched same-card orchestration scope", () => {
       harness.close();
     }
   });
+
+  it("persists diagnostic refresh only for an ordinary operator", async () => {
+    const harness = createHarness();
+    const { store, host } = harness;
+    try {
+      const { sessionKey } = await dispatchParent(store, host);
+      const unrelated = await host.create({
+        title: "Completed without proof",
+        agentId: "other",
+        status: "done",
+      });
+      const workerList = createWorkboardTools({
+        store,
+        context: { agentId: "worker", sessionKey },
+      }).find((entry) => entry.name === "workboard_list")!;
+
+      await expect(
+        workerList.execute("worker-refresh", { refreshDiagnostics: true }),
+      ).rejects.toThrow("cannot refresh board-wide diagnostics");
+      await expect(host.get(unrelated.id)).resolves.toEqual(unrelated);
+
+      const operatorList = createWorkboardTools({
+        store,
+        context: { agentId: "operator", sessionKey: "agent:operator:main" },
+      }).find((entry) => entry.name === "workboard_list")!;
+      await expect(
+        operatorList.execute("operator-refresh", { refreshDiagnostics: true }),
+      ).resolves.toBeDefined();
+      await expect(host.get(unrelated.id)).resolves.toMatchObject({
+        metadata: {
+          diagnostics: expect.arrayContaining([expect.objectContaining({ kind: "missing_proof" })]),
+        },
+      });
+    } finally {
+      harness.close();
+    }
+  });
 });
