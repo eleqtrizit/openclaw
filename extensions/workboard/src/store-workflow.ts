@@ -96,7 +96,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
         now,
         ttlSeconds ? secondsToDurationMs(ttlSeconds) : DEFAULT_CLAIM_TTL_MS,
       );
-      const guarded = await this.promoteDependencyReady(id, now);
+      const guarded = await this.promoteDependencyReady(id, now, input, true);
       assertDispatchedMutationScope(guarded, input);
       if (guarded.metadata?.archivedAt) {
         throw new Error("card is archived.");
@@ -158,6 +158,8 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
         {
           expectedUpdatedAt: guarded.updatedAt,
           ownerSlot: { ownerId, now },
+          mutationScope: input,
+          dispatchedScopeOnly: true,
         },
       );
       return { card, token };
@@ -227,7 +229,10 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
           status,
           metadata: { ...existing.metadata, claim: undefined },
         },
-        { enforceStatusHolds: input.status !== undefined },
+        {
+          enforceStatusHolds: input.status !== undefined,
+          mutationScope: input,
+        },
       );
     });
   }
@@ -330,6 +335,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
       {
         enforceStatusHolds: true,
         preserveProofId: proofId ?? proof?.id,
+        mutationScope: scope === null ? undefined : scope,
       },
     );
   }
@@ -393,7 +399,9 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
       const reason =
         normalizeBoundedString(input.reason, undefined, 2000, "block reason") ??
         "Workboard card blocked.";
-      return await this.updateCard(id, this.buildBlockedCardPatch(existing, reason, now, options));
+      return await this.updateCard(id, this.buildBlockedCardPatch(existing, reason, now, options), {
+        mutationScope: scope === null ? undefined : scope,
+      });
     });
   }
 
@@ -405,7 +413,11 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
       }
       assertCanMutateClaimedCard(existing, scope);
       const metadata = clearDiagnostics(existing.metadata, ["blocked_too_long"]);
-      return await this.updateCard(id, { status: "todo", metadata: { ...metadata, stale: null } });
+      return await this.updateCard(
+        id,
+        { status: "todo", metadata: { ...metadata, stale: null } },
+        { mutationScope: scope },
+      );
     });
   }
 
@@ -441,7 +453,14 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
             ].slice(-MAX_CARD_COMMENTS)
           : baseMetadata?.comments,
       };
-      return await this.updateCard(id, { agentId, status, metadata }, { enforceStatusHolds: true });
+      return await this.updateCard(
+        id,
+        { agentId, status, metadata },
+        {
+          enforceStatusHolds: true,
+          mutationScope: scope === null ? undefined : scope,
+        },
+      );
     });
   }
 
@@ -482,9 +501,16 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
             stale: null,
           },
         },
-        { enforceStatusHolds: true },
+        {
+          enforceStatusHolds: true,
+          mutationScope: scope === null ? undefined : scope,
+        },
       );
-      return await this.promoteDependencyReady(reclaimed.id, now);
+      return await this.promoteDependencyReady(
+        reclaimed.id,
+        now,
+        scope === null ? undefined : scope,
+      );
     });
   }
 
@@ -544,7 +570,12 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
           status: "todo",
           metadata,
         },
-        { enforceStatusHolds: true, event: { kind: "specified" }, eventAt: now },
+        {
+          enforceStatusHolds: true,
+          event: { kind: "specified" },
+          eventAt: now,
+          mutationScope: scope === null ? undefined : scope,
+        },
       );
     });
   }
@@ -632,7 +663,10 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
                       ),
                     },
                   },
-                  { enforceStatusHolds: true },
+                  {
+                    enforceStatusHolds: true,
+                    mutationScope: scope === null ? undefined : scope,
+                  },
                 );
               })();
           const decomposedParent = await this.updateCard(
@@ -641,6 +675,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
             {
               event: { kind: "decomposed" },
               expectedUpdatedAt: updatedParent.updatedAt,
+              mutationScope: scope === null ? undefined : scope,
             },
           );
           return { parent: decomposedParent, children };

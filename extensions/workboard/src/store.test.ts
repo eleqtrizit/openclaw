@@ -363,6 +363,137 @@ describe("WorkboardStore", () => {
     }
   });
 
+  it("rejects dispatched completion when another host reassigns the card before persistence", async () => {
+    const harness = createConcurrentSqliteHarness("openclaw-workboard-dispatch-complete-race-");
+    try {
+      const sessionKey = "agent:worker:subagent:workboard-default-original";
+      const card = await harness.operation.create({
+        title: "Assigned work",
+        status: "running",
+        sessionKey,
+      });
+      const pause = harness.paused.pauseNextWrite();
+      const completion = harness.operation.complete(
+        card.id,
+        { summary: "stale completion" },
+        { dispatchedCardId: card.id, dispatchedSessionKey: sessionKey },
+      );
+
+      await pause.reached;
+      await harness.host.update(card.id, {
+        sessionKey: "agent:worker:subagent:workboard-default-reassigned",
+      });
+      const reassigned = await harness.host.get(card.id);
+      pause.resume();
+
+      await expect(completion).rejects.toThrow();
+      await expect(harness.host.get(card.id)).resolves.toEqual(reassigned);
+    } finally {
+      harness.close();
+    }
+  });
+
+  it.each(["block", "release", "reassign", "reclaim", "specify", "promote", "protocol"] as const)(
+    "rejects a stale dispatched %s write when another host reassigns the card",
+    async (operation) => {
+      const harness = createConcurrentSqliteHarness(
+        `openclaw-workboard-dispatch-${operation}-race-`,
+      );
+      try {
+        const sessionKey = "agent:worker:subagent:workboard-default-original";
+        const initialStatus =
+          operation === "specify" || operation === "promote" ? "todo" : "running";
+        const card = await harness.operation.create({
+          title: "Assigned work",
+          status: initialStatus,
+          sessionKey,
+        });
+        const scope = { dispatchedCardId: card.id, dispatchedSessionKey: sessionKey };
+        const token =
+          operation === "release"
+            ? (await harness.operation.claim(card.id, { ownerId: "worker", token: "worker-token" }))
+                .token
+            : undefined;
+        const pause = harness.paused.pauseNextWrite();
+        const mutation = (() => {
+          switch (operation) {
+            case "block":
+              return harness.operation.block(card.id, { reason: "stale block" }, scope);
+            case "release":
+              return harness.operation.releaseClaim(card.id, {
+                ...scope,
+                ownerId: "worker",
+                token,
+              });
+            case "reassign":
+              return harness.operation.reassign(card.id, { agentId: "other" }, scope);
+            case "reclaim":
+              return harness.operation.reclaim(card.id, { reason: "stale reclaim" }, scope);
+            case "specify":
+              return harness.operation.specify(card.id, { summary: "stale specification" }, scope);
+            case "promote":
+              return harness.operation.promote(card.id, { reason: "stale promotion" }, scope);
+            case "protocol":
+              return harness.operation.recordProtocolViolation(
+                card.id,
+                { detail: "stale violation" },
+                scope,
+              );
+          }
+          throw new Error("unsupported operation");
+        })();
+
+        await pause.reached;
+        await harness.host.update(card.id, {
+          sessionKey: "agent:worker:subagent:workboard-default-reassigned",
+        });
+        const reassigned = await harness.host.get(card.id);
+        pause.resume();
+
+        await expect(mutation).rejects.toThrow();
+        await expect(harness.host.get(card.id)).resolves.toEqual(reassigned);
+      } finally {
+        harness.close();
+      }
+    },
+  );
+
+  it("rejects a queued stale claim before dependency promotion changes the reassigned card", async () => {
+    const harness = createConcurrentSqliteHarness("openclaw-workboard-dispatch-claim-race-");
+    try {
+      const sessionKey = "agent:worker:subagent:workboard-default-original";
+      const parent = await harness.operation.create({ title: "Dependency", status: "todo" });
+      const child = await harness.operation.create({
+        title: "Assigned work",
+        status: "todo",
+        sessionKey,
+        parents: [parent.id],
+      });
+      const gate = await harness.operation.create({ title: "Mutation queue gate" });
+      const pause = harness.paused.pauseNextWrite();
+      const gateMutation = harness.operation.update(gate.id, { notes: "hold queue" });
+      await pause.reached;
+      const claim = harness.operation.claim(child.id, {
+        ownerId: "worker",
+        dispatchedCardId: child.id,
+        dispatchedSessionKey: sessionKey,
+      });
+
+      await harness.host.update(child.id, {
+        sessionKey: "agent:worker:subagent:workboard-default-reassigned",
+      });
+      await harness.host.update(parent.id, { status: "done" });
+      const reassigned = await harness.host.get(child.id);
+      pause.resume();
+      await gateMutation;
+
+      await expect(claim).rejects.toThrow("no longer assigned");
+      await expect(harness.host.get(child.id)).resolves.toEqual(reassigned);
+    } finally {
+      harness.close();
+    }
+  });
+
   it("deletes a sqlite card only at its exact updatedAt version", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-delete-cas-"));
     const dbPath = path.join(dir, "workboard.sqlite");

@@ -120,14 +120,18 @@ export class WorkboardEnrichmentStore extends WorkboardCoreStore {
         contentBase64,
       });
       try {
-        const updated = await this.updateCard(id, {
-          metadata: {
-            ...clearDiagnostics(existing.metadata, ["missing_proof"]),
-            attachments: [...(existing.metadata?.attachments ?? []), attachment].slice(
-              -MAX_CARD_ATTACHMENTS,
-            ),
+        const updated = await this.updateCard(
+          id,
+          {
+            metadata: {
+              ...clearDiagnostics(existing.metadata, ["missing_proof"]),
+              attachments: [...(existing.metadata?.attachments ?? []), attachment].slice(
+                -MAX_CARD_ATTACHMENTS,
+              ),
+            },
           },
-        });
+          { mutationScope: scope },
+        );
         if (!updated.metadata?.attachments?.some((entry) => entry.id === attachment.id)) {
           await this.attachmentStore.delete(attachment.id);
           throw new Error("attachment metadata was trimmed before it could be indexed.");
@@ -172,13 +176,18 @@ export class WorkboardEnrichmentStore extends WorkboardCoreStore {
       if (!attachments.some((attachment) => attachment.id === attachmentId)) {
         throw new Error(`attachment not found: ${attachmentId}`);
       }
-      await this.attachmentStore.delete(attachmentId);
-      return await this.updateCard(cardId, {
-        metadata: {
-          ...existing.metadata,
-          attachments: attachments.filter((attachment) => attachment.id !== attachmentId),
+      const updated = await this.updateCard(
+        cardId,
+        {
+          metadata: {
+            ...existing.metadata,
+            attachments: attachments.filter((attachment) => attachment.id !== attachmentId),
+          },
         },
-      });
+        { mutationScope: scope },
+      );
+      await this.attachmentStore.delete(attachmentId);
+      return updated;
     });
   }
 
@@ -256,25 +265,29 @@ export class WorkboardEnrichmentStore extends WorkboardCoreStore {
           : {}),
         ...(runId || cardRunId(card) ? { runId: runId ?? cardRunId(card) } : {}),
       };
-      return await this.updateCard(card.id, {
-        status: card.status === "done" ? card.status : "blocked",
-        ...(execution ? { execution } : {}),
-        metadata: {
-          ...card.metadata,
-          workerLogs: [...(card.metadata?.workerLogs ?? []), log].slice(-MAX_CARD_WORKER_LOGS),
-          workerProtocol: {
-            state: "violated",
-            updatedAt: now,
-            detail,
+      return await this.updateCard(
+        card.id,
+        {
+          status: card.status === "done" ? card.status : "blocked",
+          ...(execution ? { execution } : {}),
+          metadata: {
+            ...card.metadata,
+            workerLogs: [...(card.metadata?.workerLogs ?? []), log].slice(-MAX_CARD_WORKER_LOGS),
+            workerProtocol: {
+              state: "violated",
+              updatedAt: now,
+              detail,
+            },
+            claim: undefined,
+            ...(attempts ? { attempts } : {}),
+            failureCount: (card.metadata?.failureCount ?? 0) + 1,
+            notifications: [...(card.metadata?.notifications ?? []), notification].slice(
+              -MAX_CARD_NOTIFICATIONS,
+            ),
           },
-          claim: undefined,
-          ...(attempts ? { attempts } : {}),
-          failureCount: (card.metadata?.failureCount ?? 0) + 1,
-          notifications: [...(card.metadata?.notifications ?? []), notification].slice(
-            -MAX_CARD_NOTIFICATIONS,
-          ),
         },
-      });
+        { mutationScope: scope },
+      );
     });
   }
 }

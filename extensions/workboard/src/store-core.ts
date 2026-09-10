@@ -50,7 +50,10 @@ import type {
   WorkboardMutationScope,
   WorkboardStatsResult,
 } from "./store-inputs.js";
-import { assertCanMutateClaimedCard } from "./store-mutation-scope.js";
+import {
+  assertCanMutateClaimedCard,
+  assertDispatchedMutationScope,
+} from "./store-mutation-scope.js";
 import {
   appendLinkPreservingDependencies,
   metadataIsEmpty,
@@ -85,6 +88,8 @@ type WorkboardUpdateCardOptions = {
   expectedUpdatedAt?: number;
   ownerSlot?: { ownerId: string; now: number };
   preserveProofId?: string;
+  mutationScope?: WorkboardMutationScope;
+  dispatchedScopeOnly?: boolean;
 };
 
 type WorkboardMutationJournalEntry = {
@@ -710,6 +715,11 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
     if (!existing) {
       throw new Error(`card not found: ${id}`);
     }
+    if (options.dispatchedScopeOnly) {
+      assertDispatchedMutationScope(existing, options.mutationScope);
+    } else {
+      assertCanMutateClaimedCard(existing, options.mutationScope);
+    }
     if (
       options.expectedUpdatedAt !== undefined &&
       existing.updatedAt !== options.expectedUpdatedAt
@@ -1087,14 +1097,14 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       {
         metadata: { ...parent.metadata, links: nextParentLinks },
       },
-      { expectedUpdatedAt: parent.updatedAt },
+      { expectedUpdatedAt: parent.updatedAt, mutationScope: options.scope },
     );
     const nextChild = await this.updateCard(
       child.id,
       { metadata: { ...child.metadata, links: nextChildLinks } },
-      { expectedUpdatedAt: child.updatedAt },
+      { expectedUpdatedAt: child.updatedAt, mutationScope: options.scope },
     );
-    return await this.promoteDependencyReady(nextChild.id);
+    return await this.promoteDependencyReady(nextChild.id, Date.now(), options.scope);
   }
 
   private async dependencyTargetStatus(card: WorkboardCard, now: number): Promise<WorkboardStatus> {
@@ -1194,10 +1204,20 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
     return result.card;
   }
 
-  protected async promoteDependencyReady(id: string, now = Date.now()): Promise<WorkboardCard> {
+  protected async promoteDependencyReady(
+    id: string,
+    now = Date.now(),
+    scope?: WorkboardMutationScope,
+    dispatchedScopeOnly = false,
+  ): Promise<WorkboardCard> {
     const card = await this.get(id);
     if (!card) {
       throw new Error(`card not found: ${id}`);
+    }
+    if (dispatchedScopeOnly) {
+      assertDispatchedMutationScope(card, scope);
+    } else {
+      assertCanMutateClaimedCard(card, scope);
     }
     if (card.metadata?.archivedAt) {
       return card;
@@ -1206,7 +1226,15 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
     if (target === card.status) {
       return card;
     }
-    return await this.updateCard(card.id, { status: target });
+    return await this.updateCard(
+      card.id,
+      { status: target },
+      {
+        expectedUpdatedAt: card.updatedAt,
+        mutationScope: scope,
+        dispatchedScopeOnly,
+      },
+    );
   }
 }
 

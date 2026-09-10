@@ -72,7 +72,10 @@ export class WorkboardPromoteStore extends WorkboardEnrichmentStore {
             stale: null,
           },
         },
-        { enforceStatusHolds: input.force !== true },
+        {
+          enforceStatusHolds: input.force !== true,
+          mutationScope: scope === null ? undefined : scope,
+        },
       );
     });
   }
