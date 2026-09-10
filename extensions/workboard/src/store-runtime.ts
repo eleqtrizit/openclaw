@@ -78,17 +78,17 @@ export class WorkboardStoreRuntime {
   protected trackCardStore(store: WorkboardCardStore): WorkboardCardStore {
     return {
       ...this.track(store),
-      registerIfAbsent: (key, value) =>
+      registerIfAbsent: (key, value, authority) =>
         this.runOperation(async () => {
-          const inserted = await store.registerIfAbsent(key, value);
+          const inserted = await store.registerIfAbsent(key, value, authority);
           if (inserted) {
             this.mutationRevision += 1;
           }
           return inserted;
         }),
-      registerIfUpdatedAt: (key, value, expectedUpdatedAt) =>
+      registerIfUpdatedAt: (key, value, expectedUpdatedAt, authority) =>
         this.runOperation(async () => {
-          const updated = await store.registerIfUpdatedAt(key, value, expectedUpdatedAt);
+          const updated = await store.registerIfUpdatedAt(key, value, expectedUpdatedAt, authority);
           if (updated) {
             this.mutationRevision += 1;
           }
@@ -102,7 +102,7 @@ export class WorkboardStoreRuntime {
           }
           return deleted;
         }),
-      claimIfOwnerAvailable: (key, value, expectedUpdatedAt, ownerId, now) =>
+      claimIfOwnerAvailable: (key, value, expectedUpdatedAt, ownerId, now, authority) =>
         this.runOperation(async () => {
           const result = await store.claimIfOwnerAvailable(
             key,
@@ -110,6 +110,7 @@ export class WorkboardStoreRuntime {
             expectedUpdatedAt,
             ownerId,
             now,
+            authority,
           );
           if (result === "updated") {
             this.mutationRevision += 1;

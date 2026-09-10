@@ -232,6 +232,11 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
         {
           enforceStatusHolds: input.status !== undefined,
           mutationScope: input,
+          // Release supports trusted operator calls without claim credentials.
+          // Fence the dispatched session and the snapshot whose optional claim
+          // credentials were validated above, without imposing a new owner check.
+          dispatchedScopeOnly: true,
+          expectedUpdatedAt: existing.updatedAt,
         },
       );
     });

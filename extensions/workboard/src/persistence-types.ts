@@ -44,12 +44,23 @@ export type WorkboardBoardCardAggregate = {
 
 export type WorkboardOwnerClaimResult = "updated" | "conflict" | "owner_busy";
 
+// The parent row whose current authority permits a derived-card write.
+export type WorkboardCardWriteAuthority = {
+  cardId: string;
+  expectedUpdatedAt: number;
+};
+
 export type WorkboardCardStore = WorkboardKeyedStore & {
-  registerIfAbsent(key: string, value: PersistedWorkboardCard): Promise<boolean>;
+  registerIfAbsent(
+    key: string,
+    value: PersistedWorkboardCard,
+    authority?: WorkboardCardWriteAuthority,
+  ): Promise<boolean>;
   registerIfUpdatedAt(
     key: string,
     value: PersistedWorkboardCard,
     expectedUpdatedAt: number,
+    authority?: WorkboardCardWriteAuthority,
   ): Promise<boolean>;
   deleteIfUpdatedAt(key: string, expectedUpdatedAt: number): Promise<boolean>;
   claimIfOwnerAvailable(
@@ -58,6 +69,7 @@ export type WorkboardCardStore = WorkboardKeyedStore & {
     expectedUpdatedAt: number,
     ownerId: string,
     now: number,
+    authority?: WorkboardCardWriteAuthority,
   ): Promise<WorkboardOwnerClaimResult>;
   listBoardAggregates(): Promise<WorkboardBoardCardAggregate[]>;
 };

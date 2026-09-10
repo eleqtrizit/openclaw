@@ -36,6 +36,7 @@ import type {
   PersistedWorkboardCard,
   PersistedWorkboardNotificationSubscription,
   WorkboardCardStore,
+  WorkboardCardWriteAuthority,
   WorkboardKeyedStore,
   WorkboardOwnerClaimResult,
 } from "./persistence-types.js";
@@ -1231,14 +1232,25 @@ class WorkboardSqliteCardStore implements WorkboardCardStore {
     }
   }
 
+  private assertWriteAuthority(authority: WorkboardCardWriteAuthority | undefined): void {
+    if (authority && !this.matchesUpdatedAt(authority.cardId, authority.expectedUpdatedAt)) {
+      throw new Error("dispatched Workboard worker authority changed before persistence.");
+    }
+  }
+
   async register(key: string, value: PersistedWorkboardCard): Promise<void> {
     this.validatePayload(key, value);
     runSqliteImmediateTransactionSync(this.db, () => insertCard(this.db, value.card));
   }
 
-  async registerIfAbsent(key: string, value: PersistedWorkboardCard): Promise<boolean> {
+  async registerIfAbsent(
+    key: string,
+    value: PersistedWorkboardCard,
+    authority?: WorkboardCardWriteAuthority,
+  ): Promise<boolean> {
     this.validatePayload(key, value);
     return runSqliteImmediateTransactionSync(this.db, () => {
+      this.assertWriteAuthority(authority);
       if (this.db.prepare("SELECT 1 FROM workboard_cards WHERE id = ?").get(key)) {
         return false;
       }
@@ -1251,9 +1263,11 @@ class WorkboardSqliteCardStore implements WorkboardCardStore {
     key: string,
     value: PersistedWorkboardCard,
     expectedUpdatedAt: number,
+    authority?: WorkboardCardWriteAuthority,
   ): Promise<boolean> {
     this.validatePayload(key, value);
     return runSqliteImmediateTransactionSync(this.db, () => {
+      this.assertWriteAuthority(authority);
       if (!this.matchesUpdatedAt(key, expectedUpdatedAt)) {
         return false;
       }
@@ -1268,9 +1282,11 @@ class WorkboardSqliteCardStore implements WorkboardCardStore {
     expectedUpdatedAt: number,
     ownerId: string,
     now: number,
+    authority?: WorkboardCardWriteAuthority,
   ): Promise<WorkboardOwnerClaimResult> {
     this.validatePayload(key, value);
     return runSqliteImmediateTransactionSync(this.db, () => {
+      this.assertWriteAuthority(authority);
       if (!this.matchesUpdatedAt(key, expectedUpdatedAt)) {
         return "conflict";
       }

@@ -24,6 +24,51 @@ function createMemoryStore<T = PersistedWorkboardCard>(): WorkboardKeyedStore<T>
 }
 
 describe("workboard gateway methods", () => {
+  it("preserves tokenless operator release and rejects incorrect supplied claim credentials", async () => {
+    type RegisteredMethod = {
+      handler: Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1];
+      opts: Parameters<OpenClawPluginApi["registerGatewayMethod"]>[2];
+    };
+    const methods = new Map<string, RegisteredMethod>();
+    const api = {
+      registerGatewayMethod: vi.fn(
+        (method: string, handler: RegisteredMethod["handler"], opts: RegisteredMethod["opts"]) => {
+          methods.set(method, { handler, opts });
+        },
+      ),
+    } as unknown as OpenClawPluginApi;
+    const store = new WorkboardStore(createMemoryStore());
+    registerWorkboardGatewayMethods({ api, store });
+    const release = methods.get("workboard.cards.release")!;
+    expect(release.opts).toEqual({ scope: "operator.write" });
+    const created = await store.create({ title: "Operator recovery target", status: "ready" });
+    await store.claim(created.id, { ownerId: "worker", token: "synthetic-claim-token" });
+    const claimed = await store.get(created.id);
+
+    for (const credentials of [{ token: "incorrect-token" }, { ownerId: "different-worker" }]) {
+      const respond = vi.fn();
+      await release.handler({
+        params: { id: created.id, ...credentials },
+        client: { connect: { scopes: ["operator.write"] } },
+        respond,
+      } as never);
+      expect(respond.mock.calls[0]?.[0]).toBe(false);
+      await expect(store.get(created.id)).resolves.toEqual(claimed);
+    }
+
+    const respond = vi.fn();
+    await release.handler({
+      params: { id: created.id },
+      client: { connect: { scopes: ["operator.write"] } },
+      respond,
+    } as never);
+    expect(respond.mock.calls[0]?.[0]).toBe(true);
+    const released = await store.get(created.id);
+    expect(released?.metadata?.claim).toBeUndefined();
+    expect(released?.status).toBe(claimed?.status);
+    expect(released?.title).toBe(claimed?.title);
+  });
+
   it("registers CRUD methods with read/write scopes", async () => {
     type RegisteredMethod = {
       handler: Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1];
