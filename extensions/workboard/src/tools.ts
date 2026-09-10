@@ -692,9 +692,6 @@ export function createWorkboardTools(params: {
     createWorkboardMoveTool({ store, readScopedCardToolParams, redactedCardResult }),
     ...createWorkboardOrchestrationTools({
       store,
-      ownerId,
-      requireScopedCard: (targetStore, cardId, targetOwnerId, token) =>
-        requireScopedCard(targetStore, cardId, targetOwnerId, token, dispatchedWorkerBinding),
       readScopedCardToolParams,
       readClaimedCardToolParams,
       runScopedCardMutation,

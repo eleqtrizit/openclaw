@@ -7,11 +7,12 @@ import { Type } from "typebox";
 import { redactClaimToken } from "./card-redaction.js";
 import type { WorkboardStore } from "./store.js";
 import { cardIdField, claimTokenField, strictObject } from "./tools-card-mutations.js";
+import type { WorkboardToolMutationScope } from "./tools-dispatched-scope.js";
 
 type ScopedCardParams = {
   record: Record<string, unknown>;
   id: string;
-  scope: { ownerId: string; token?: string };
+  scope: WorkboardToolMutationScope;
 };
 
 type WorkboardCardMutation = (
@@ -34,13 +35,6 @@ const OptionalOperatorNoteField = Type.Optional(
 
 export function createWorkboardOrchestrationTools(params: {
   store: WorkboardStore;
-  ownerId: string;
-  requireScopedCard: (
-    store: WorkboardStore,
-    cardId: string,
-    ownerId: string,
-    token?: string,
-  ) => Promise<WorkboardCard>;
   readScopedCardToolParams: (rawParams: unknown) => Promise<ScopedCardParams>;
   readClaimedCardToolParams: (rawParams: unknown) => Promise<ScopedCardParams>;
   runScopedCardMutation: (
@@ -51,8 +45,6 @@ export function createWorkboardOrchestrationTools(params: {
 }): AnyAgentTool[] {
   const {
     store,
-    ownerId,
-    requireScopedCard,
     readScopedCardToolParams,
     readClaimedCardToolParams,
     runScopedCardMutation,
@@ -182,12 +174,9 @@ export function createWorkboardOrchestrationTools(params: {
         token: Type.Optional(Type.String({ description: "Claim token for claimed cards." })),
       }),
       execute: async (_toolCallId, rawParams) => {
-        const record = asNonArrayRecord(rawParams);
-        const id = readStringParam(record, "id", { required: true });
-        const token = typeof record.token === "string" ? record.token : undefined;
-        await requireScopedCard(store, id, ownerId, token);
+        const { record, id, scope } = await readScopedCardToolParams(rawParams);
         return jsonResult({
-          card: redactClaimToken(await store.specify(id, record, { ownerId, token: record.token })),
+          card: redactClaimToken(await store.specify(id, record, scope)),
         });
       },
     },
@@ -229,11 +218,8 @@ export function createWorkboardOrchestrationTools(params: {
         ),
       }),
       execute: async (_toolCallId, rawParams) => {
-        const record = asNonArrayRecord(rawParams);
-        const id = readStringParam(record, "id", { required: true });
-        const token = typeof record.token === "string" ? record.token : undefined;
-        await requireScopedCard(store, id, ownerId, token);
-        const result = await store.decompose(id, record, { ownerId, token: record.token });
+        const { record, id, scope } = await readScopedCardToolParams(rawParams);
+        const result = await store.decompose(id, record, scope);
         return jsonResult({
           parent: redactClaimToken(result.parent),
           children: result.children.map(redactClaimToken),
