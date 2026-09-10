@@ -165,8 +165,9 @@ async function requireClaimedCard(
   cardId: string,
   ownerId: string,
   token?: string,
+  dispatchedWorkerBinding?: DispatchedWorkerBinding,
 ): Promise<WorkboardCard> {
-  const card = await requireScopedCard(store, cardId, ownerId, token);
+  const card = await requireScopedCard(store, cardId, ownerId, token, dispatchedWorkerBinding);
   if (!card.metadata?.claim) {
     throw new Error("card must be claimed before lifecycle completion.");
   }
@@ -268,7 +269,7 @@ export function createWorkboardTools(params: {
     rawParams: unknown,
   ): Promise<WorkboardToolCardParams> => {
     const input = readCardToolParams(rawParams, ownerId);
-    await requireClaimedCard(store, input.id, ownerId, input.token);
+    await requireClaimedCard(store, input.id, ownerId, input.token, dispatchedWorkerBinding);
     return input;
   };
   const runCardMutation = async (
@@ -362,7 +363,11 @@ export function createWorkboardTools(params: {
         const parents = readParentIds(record.parents);
         if (dispatchedWorkerBinding) {
           const boundCard = await resolveDispatchedWorkerCard(store, dispatchedWorkerBinding);
-          if (record.createdByCardId !== boundCard.id || !parents.includes(boundCard.id)) {
+          if (
+            record.createdByCardId !== boundCard.id ||
+            parents.length !== 1 ||
+            parents[0] !== boundCard.id
+          ) {
             throw new Error(
               "dispatched Workboard workers may create only children explicitly linked to their assigned card.",
             );

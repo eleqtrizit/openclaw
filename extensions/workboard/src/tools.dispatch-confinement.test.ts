@@ -133,6 +133,75 @@ describe("dispatched Workboard worker confinement", () => {
     });
   });
 
+  it("rejects unrelated claimed-only lifecycle targets without side effects", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const assigned = await store.create({ title: "Assigned", agentId: "worker" });
+    const completeTarget = await store.create({ title: "Complete target", agentId: "worker" });
+    const blockTarget = await store.create({ title: "Block target", agentId: "worker" });
+    const violationTarget = await store.create({ title: "Violation target", agentId: "worker" });
+    const targets = [completeTarget, blockTarget, violationTarget];
+    const tokens = ["complete-token", "block-token", "violation-token"];
+    for (const [index, target] of targets.entries()) {
+      await store.claim(target.id, { ownerId: "worker", token: tokens[index] });
+    }
+    const before = await Promise.all(targets.map((target) => store.get(target.id)));
+    const tools = toolMap(store, {
+      agentId: "worker",
+      sessionKey: workboardSessionKeyForCard(assigned),
+    });
+
+    await expect(
+      tools.get("workboard_complete")?.execute("complete-unrelated", {
+        id: completeTarget.id,
+        token: tokens[0],
+        summary: "Should not complete.",
+      }),
+    ).rejects.toThrow("only their assigned card");
+    await expect(
+      tools.get("workboard_block")?.execute("block-unrelated", {
+        id: blockTarget.id,
+        token: tokens[1],
+        reason: "Should not block.",
+      }),
+    ).rejects.toThrow("only their assigned card");
+    await expect(
+      tools.get("workboard_protocol_violation")?.execute("violate-unrelated", {
+        id: violationTarget.id,
+        token: tokens[2],
+        detail: "Should not record.",
+      }),
+    ).rejects.toThrow("only their assigned card");
+
+    for (const [index, target] of targets.entries()) {
+      await expect(store.get(target.id)).resolves.toEqual(before[index]);
+    }
+  });
+
+  it("rejects derived creation with an extra unrelated parent without side effects", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const assigned = await store.create({ title: "Assigned", agentId: "worker" });
+    const unrelated = await store.create({ title: "Unrelated", agentId: "worker" });
+    const tools = toolMap(store, {
+      agentId: "worker",
+      sessionKey: workboardSessionKeyForCard(assigned),
+    });
+    const before = await store.list({});
+    const assignedBefore = await store.get(assigned.id);
+    const unrelatedBefore = await store.get(unrelated.id);
+
+    await expect(
+      tools.get("workboard_create")?.execute("multi-parent-create", {
+        title: "Illegitimate child",
+        createdByCardId: assigned.id,
+        parents: [assigned.id, unrelated.id],
+      }),
+    ).rejects.toThrow("only children explicitly linked");
+
+    await expect(store.list({})).resolves.toHaveLength(before.length);
+    await expect(store.get(assigned.id)).resolves.toEqual(assignedBefore);
+    await expect(store.get(unrelated.id)).resolves.toEqual(unrelatedBefore);
+  });
+
   it("preserves decomposition and links only children derived from the assigned card", async () => {
     const store = new WorkboardStore(createMemoryStore());
     const assigned = await store.create({ title: "Assigned", agentId: "worker" });
