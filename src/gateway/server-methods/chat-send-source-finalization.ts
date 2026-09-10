@@ -5,10 +5,7 @@ import {
 } from "../../auto-reply/reply-payload.js";
 import type { QueuedFollowupReplyBatch } from "../../auto-reply/reply/queue/types.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import {
-  appendLocalMediaParentRoots,
-  getAgentScopedMediaLocalRoots,
-} from "../../media/local-roots.js";
+import { getAgentScopedMediaLocalRootsForSources } from "../../media/local-roots.js";
 import { appendChatCanvasBlocksToMessage } from "../chat-display-projection.canvas.js";
 import { attachManagedOutgoingMediaToMessage } from "../managed-image-attachments.js";
 import { loadSessionEntry } from "../session-utils.js";
@@ -241,10 +238,11 @@ async function finalizeChatSendAgentReplyPayloads(
     sessionLoadOptions,
   );
   const sessionId = latestEntry?.sessionId ?? backingSessionId ?? clientRunId;
-  const mediaLocalRoots = appendLocalMediaParentRoots(
-    getAgentScopedMediaLocalRoots(cfg, agentId),
-    latestStorePath ? [latestStorePath] : undefined,
-  );
+  const mediaLocalRoots = getAgentScopedMediaLocalRootsForSources({
+    cfg,
+    agentId,
+    mediaSources: latestStorePath ? [latestStorePath] : undefined,
+  });
   const buildReplyContent = async (payloads: typeof finalPayloads) => {
     const mediaMessage = await buildWebchatAssistantMessageFromReplyPayloads(payloads, {
       localRoots: mediaLocalRoots,
