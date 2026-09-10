@@ -69,6 +69,14 @@ function createPausedCardStore(delegate: WorkboardCardStore) {
         waitForResume: Promise<void>;
       }
     | undefined;
+  let pauseLookup:
+    | {
+        matches: (key: string) => boolean;
+        remaining: number;
+        reached: () => void;
+        waitForResume: Promise<void>;
+      }
+    | undefined;
   const beforeWrite = async () => {
     const current = pause;
     if (!current) {
@@ -133,6 +141,15 @@ function createPausedCardStore(delegate: WorkboardCardStore) {
         return deleted;
       },
       async lookup(key) {
+        const current = pauseLookup;
+        if (current?.matches(key)) {
+          current.remaining -= 1;
+          if (current.remaining === 0) {
+            pauseLookup = undefined;
+            current.reached();
+            await current.waitForResume;
+          }
+        }
         return await delegate.lookup(key);
       },
       async delete(key) {
@@ -162,6 +179,17 @@ function createPausedCardStore(delegate: WorkboardCardStore) {
       const resume = createSignal();
       pauseAfter = {
         matches,
+        reached: () => reached.resolve(),
+        waitForResume: resume.promise,
+      };
+      return { reached: reached.promise, resume: () => resume.resolve() };
+    },
+    pauseMatchingLookup(matches: (key: string) => boolean, occurrence = 1) {
+      const reached = createSignal();
+      const resume = createSignal();
+      pauseLookup = {
+        matches,
+        remaining: occurrence,
         reached: () => reached.resolve(),
         waitForResume: resume.promise,
       };
@@ -372,7 +400,7 @@ describe("WorkboardStore", () => {
         status: "running",
         sessionKey,
       });
-      const pause = harness.paused.pauseNextWrite();
+      const pause = harness.paused.pauseMatchingLookup((key) => key === card.id, 2);
       const completion = harness.operation.complete(
         card.id,
         { summary: "stale completion" },
@@ -414,7 +442,7 @@ describe("WorkboardStore", () => {
             ? (await harness.operation.claim(card.id, { ownerId: "worker", token: "worker-token" }))
                 .token
             : undefined;
-        const pause = harness.paused.pauseNextWrite();
+        const pause = harness.paused.pauseMatchingLookup((key) => key === card.id, 2);
         const mutation = (() => {
           switch (operation) {
             case "block":
