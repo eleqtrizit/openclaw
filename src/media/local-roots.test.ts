@@ -230,6 +230,34 @@ describe("local media roots", () => {
     expectNormalizedRootsContain(roots, [path.join(stateDir, "workspace")]);
   });
 
+  it("drops the shared workspace from session-safe attachment roots for sandboxed sessions", () => {
+    const stateDir = path.join("/tmp", "openclaw-session-safe-sandbox-state");
+    const sessionWorkspaceDir = path.join(stateDir, "sandboxes", "session-a");
+
+    const roots = withStateDir(stateDir, () =>
+      getSessionSafeDefaultMediaLocalRoots(sessionWorkspaceDir),
+    );
+
+    // The session workspace itself is merged back by the caller
+    // (resolveMediaAttachmentLocalRoots adds params.workspaceDir explicitly).
+    expectNormalizedRootsExclude(roots, [
+      path.join(stateDir, "workspace"),
+      path.join(stateDir, "sandboxes"),
+      path.join(stateDir, "sandboxes", "session-b"),
+    ]);
+  });
+
+  it("keeps the shared workspace in session-safe attachment roots when the session workspace lives inside it", () => {
+    const stateDir = path.join("/tmp", "openclaw-session-safe-host-workspace-state");
+
+    const roots = withStateDir(stateDir, () =>
+      getSessionSafeDefaultMediaLocalRoots(path.join(stateDir, "workspace")),
+    );
+
+    expectNormalizedRootsContain(roots, [path.join(stateDir, "workspace")]);
+    expectNormalizedRootsExclude(roots, [path.join(stateDir, "sandboxes")]);
+  });
+
   it("adds concrete parent roots for local media sources without widening to filesystem root", () => {
     const picturesDir =
       process.platform === "win32" ? "C:\\Users\\peter\\Pictures" : "/Users/peter/Pictures";

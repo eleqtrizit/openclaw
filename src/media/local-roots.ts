@@ -114,9 +114,12 @@ function filterSharedMediaLocalRoots(
  * Inbound attachment processing must not inherit sibling-sandbox grants from the process default
  * list; callers re-add their own session/agent workspace explicitly when one applies.
  */
-export function getSessionSafeDefaultMediaLocalRoots(): readonly string[] {
+export function getSessionSafeDefaultMediaLocalRoots(
+  sessionWorkspaceDir?: string,
+): readonly string[] {
   return filterSharedMediaLocalRoots(getDefaultMediaLocalRoots(), {
     resolvedStateDir: path.resolve(resolveStateDir()),
+    sessionWorkspaceDir,
   });
 }
 

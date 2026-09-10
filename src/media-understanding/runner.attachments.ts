@@ -42,8 +42,10 @@ export function resolveMediaAttachmentLocalRoots(params: {
   );
   return mergeInboundPathRoots(
     // Session-safe defaults: the shared sandboxes parent (and sibling sandboxes) never becomes an
-    // attachment-read root just because the process default list contains it.
-    getSessionSafeDefaultMediaLocalRoots(),
+    // attachment-read root just because the process default list contains it, and the shared
+    // workspace parent is dropped whenever the caller's session workspace lives elsewhere
+    // (e.g. an active sandbox).
+    getSessionSafeDefaultMediaLocalRoots(params.workspaceDir),
     workspaceDirs,
     params.workspaceDir ? [path.resolve(params.workspaceDir)] : undefined,
     resolveChannelInboundAttachmentRoots(params),
