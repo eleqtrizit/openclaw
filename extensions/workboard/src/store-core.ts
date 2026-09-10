@@ -20,7 +20,6 @@ import type {
 } from "./persistence-types.js";
 import { normalizeAutomationPatch, normalizeCardAutomation } from "./store-automation.js";
 import {
-  assertCanMutateClaimedCard,
   cardBoardId,
   cardParentIds,
   cardSessionKey,
@@ -51,6 +50,7 @@ import type {
   WorkboardMutationScope,
   WorkboardStatsResult,
 } from "./store-inputs.js";
+import { assertCanMutateClaimedCard } from "./store-mutation-scope.js";
 import {
   appendLinkPreservingDependencies,
   metadataIsEmpty,

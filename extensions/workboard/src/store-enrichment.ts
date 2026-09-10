@@ -6,12 +6,7 @@ import type {
   WorkboardWorkerLog,
 } from "@openclaw/workboard-contract";
 import type { PersistedWorkboardAttachment } from "./persistence-types.js";
-import {
-  assertCanMutateClaimedCard,
-  cardRunId,
-  cardSessionKey,
-  closeRunningAttempts,
-} from "./store-card-helpers.js";
+import { cardRunId, cardSessionKey, closeRunningAttempts } from "./store-card-helpers.js";
 import {
   MAX_CARD_ARTIFACTS,
   MAX_CARD_ATTACHMENTS,
@@ -28,6 +23,7 @@ import type {
   WorkboardProtocolViolationInput,
   WorkboardWorkerLogInput,
 } from "./store-inputs.js";
+import { assertCanMutateClaimedCard } from "./store-mutation-scope.js";
 import {
   capText,
   clearDiagnostics,

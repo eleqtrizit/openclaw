@@ -11,8 +11,6 @@ import {
   type WorkboardRunAttempt,
   type WorkboardStatus,
 } from "@openclaw/workboard-contract";
-import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
-import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
   BLOCKED_TOO_LONG_MS,
   MAX_CARD_ATTEMPTS,
@@ -20,7 +18,6 @@ import {
   READY_STRANDED_MS,
   RUNNING_HEARTBEAT_STALE_MS,
 } from "./store-constants.js";
-import type { WorkboardMutationScope } from "./store-inputs.js";
 import {
   capText,
   metadataIsEmpty,
@@ -335,24 +332,6 @@ export function removeUndefinedCardFields(card: WorkboardCard): WorkboardCard {
     delete next.metadata;
   }
   return next;
-}
-
-export function assertCanMutateClaimedCard(
-  card: WorkboardCard,
-  scope: WorkboardMutationScope | undefined,
-) {
-  if (!scope) {
-    return;
-  }
-  const claim = card.metadata?.claim;
-  if (!claim) {
-    return;
-  }
-  const ownerId = normalizeOptionalString(scope.ownerId);
-  const token = normalizeOptionalString(scope.token);
-  if (claim.ownerId !== ownerId && !safeEqualSecret(token, claim.token)) {
-    throw new Error(`card is claimed by ${claim.ownerId}.`);
-  }
 }
 
 export function retryBudgetExhausted(card: WorkboardCard): boolean {

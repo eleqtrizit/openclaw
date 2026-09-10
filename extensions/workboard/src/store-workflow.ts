@@ -12,7 +12,6 @@ import { isFutureDateTimestampMs } from "openclaw/plugin-sdk/number-runtime";
 import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
-  assertCanMutateClaimedCard,
   cardBoardId,
   cardChildIds,
   cardParentIds,
@@ -45,6 +44,10 @@ import type {
   WorkboardReclaimInput,
   WorkboardSpecifyInput,
 } from "./store-inputs.js";
+import {
+  assertCanMutateClaimedCard,
+  assertDispatchedMutationScope,
+} from "./store-mutation-scope.js";
 import {
   appendCompletionProof,
   capText,
@@ -94,6 +97,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
         ttlSeconds ? secondsToDurationMs(ttlSeconds) : DEFAULT_CLAIM_TTL_MS,
       );
       const guarded = await this.promoteDependencyReady(id, now);
+      assertDispatchedMutationScope(guarded, input);
       if (guarded.metadata?.archivedAt) {
         throw new Error("card is archived.");
       }
@@ -163,6 +167,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
   async heartbeat(id: string, input: WorkboardHeartbeatInput): Promise<WorkboardCard> {
     const note = normalizeBoundedString(input.note, undefined, 400, "heartbeat note");
     const card = await this.updateMetadata(id, (existing) => {
+      assertDispatchedMutationScope(existing, input);
       const claim = existing.metadata?.claim;
       if (!claim) {
         throw new Error("card is not claimed.");
@@ -212,6 +217,7 @@ export class WorkboardWorkflowStore extends WorkboardPromoteStore {
           ? existing.status
           : normalizeStatus(input.status, existing.status);
       const claim = existing.metadata?.claim;
+      assertDispatchedMutationScope(existing, input);
       if (claim) {
         assertClaimIdentity(claim, input);
       }

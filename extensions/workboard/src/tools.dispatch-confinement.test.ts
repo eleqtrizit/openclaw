@@ -1,13 +1,19 @@
-import { describe, expect, it } from "vitest";
+import type { WorkboardCard } from "@openclaw/workboard-contract";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import { describe, expect, it, vi } from "vitest";
+import { dispatchAndStartWorkboardCards } from "./dispatcher.js";
 import type { PersistedWorkboardCard, WorkboardKeyedStore } from "./persistence-types.js";
 import { workboardSessionKeyForCard } from "./session-link.js";
 import { WorkboardStore } from "./store.js";
 import { createWorkboardTools } from "./tools.js";
 
-function createMemoryStore<T = PersistedWorkboardCard>(): WorkboardKeyedStore<T> {
+function createMemoryStore<T = PersistedWorkboardCard>(options?: {
+  beforeRegister?: () => Promise<void>;
+}): WorkboardKeyedStore<T> {
   const entries = new Map<string, T>();
   return {
     async register(key, value) {
+      await options?.beforeRegister?.();
       entries.set(key, value);
     },
     async lookup(key) {
@@ -33,14 +39,17 @@ function payload(result: unknown): Record<string, unknown> {
   return (result as { details?: Record<string, unknown> }).details ?? {};
 }
 
+async function linkDispatchedCard(store: WorkboardStore, card: WorkboardCard) {
+  return await store.update(card.id, { sessionKey: workboardSessionKeyForCard(card) });
+}
+
 describe("dispatched Workboard worker confinement", () => {
   it("rejects unrelated lifecycle targets regardless of claim state or token", async () => {
     const store = new WorkboardStore(createMemoryStore());
-    const assigned = await store.create({
-      title: "Assigned",
-      agentId: "worker",
-      boardId: "default",
-    });
+    const assigned = await linkDispatchedCard(
+      store,
+      await store.create({ title: "Assigned", agentId: "worker", boardId: "default" }),
+    );
     const unclaimed = await store.create({ title: "Unclaimed", agentId: "worker" });
     const sameOwner = await store.create({ title: "Same owner", agentId: "worker" });
     const tokenTarget = await store.create({ title: "Token target", agentId: "other" });
@@ -68,7 +77,10 @@ describe("dispatched Workboard worker confinement", () => {
 
   it("accepts the assigned lifecycle and preserves ordinary operator behavior", async () => {
     const store = new WorkboardStore(createMemoryStore());
-    const assigned = await store.create({ title: "Assigned", agentId: "worker", boardId: "ops" });
+    const assigned = await linkDispatchedCard(
+      store,
+      await store.create({ title: "Assigned", agentId: "worker", boardId: "ops" }),
+    );
     const unrelated = await store.create({ title: "Operator target", agentId: "worker" });
     const workerTools = toolMap(store, {
       agentId: "worker",
@@ -103,7 +115,10 @@ describe("dispatched Workboard worker confinement", () => {
 
   it("uses trusted explicit bindings and permits only derived child creation", async () => {
     const store = new WorkboardStore(createMemoryStore());
-    const assigned = await store.create({ title: "Assigned", agentId: "worker" });
+    const assigned = await linkDispatchedCard(
+      store,
+      await store.create({ title: "Assigned", agentId: "worker" }),
+    );
     const unrelated = await store.create({ title: "Unrelated", agentId: "worker" });
     const tools = toolMap(store, {
       agentId: "worker",
@@ -135,7 +150,10 @@ describe("dispatched Workboard worker confinement", () => {
 
   it("rejects unrelated claimed-only lifecycle targets without side effects", async () => {
     const store = new WorkboardStore(createMemoryStore());
-    const assigned = await store.create({ title: "Assigned", agentId: "worker" });
+    const assigned = await linkDispatchedCard(
+      store,
+      await store.create({ title: "Assigned", agentId: "worker" }),
+    );
     const completeTarget = await store.create({ title: "Complete target", agentId: "worker" });
     const blockTarget = await store.create({ title: "Block target", agentId: "worker" });
     const violationTarget = await store.create({ title: "Violation target", agentId: "worker" });
@@ -179,7 +197,10 @@ describe("dispatched Workboard worker confinement", () => {
 
   it("rejects derived creation with an extra unrelated parent without side effects", async () => {
     const store = new WorkboardStore(createMemoryStore());
-    const assigned = await store.create({ title: "Assigned", agentId: "worker" });
+    const assigned = await linkDispatchedCard(
+      store,
+      await store.create({ title: "Assigned", agentId: "worker" }),
+    );
     const unrelated = await store.create({ title: "Unrelated", agentId: "worker" });
     const tools = toolMap(store, {
       agentId: "worker",
@@ -204,7 +225,10 @@ describe("dispatched Workboard worker confinement", () => {
 
   it("preserves decomposition and links only children derived from the assigned card", async () => {
     const store = new WorkboardStore(createMemoryStore());
-    const assigned = await store.create({ title: "Assigned", agentId: "worker" });
+    const assigned = await linkDispatchedCard(
+      store,
+      await store.create({ title: "Assigned", agentId: "worker" }),
+    );
     const derived = await store.create({
       title: "Derived",
       agentId: "worker",
@@ -247,7 +271,10 @@ describe("dispatched Workboard worker confinement", () => {
 
   it("rejects board-wide mutations while preserving read access", async () => {
     const store = new WorkboardStore(createMemoryStore());
-    const assigned = await store.create({ title: "Assigned", agentId: "worker" });
+    const assigned = await linkDispatchedCard(
+      store,
+      await store.create({ title: "Assigned", agentId: "worker" }),
+    );
     const tools = toolMap(store, {
       agentId: "worker",
       sessionKey: workboardSessionKeyForCard(assigned),
@@ -259,5 +286,78 @@ describe("dispatched Workboard worker confinement", () => {
     await expect(tools.get("workboard_dispatch")?.execute("dispatch", {})).rejects.toThrow(
       "cannot run board-wide mutation",
     );
+  });
+
+  it("carries dispatcher-owned identity to tools and revalidates it at queued persistence", async () => {
+    const paused = createDeferred<void>();
+    const resume = createDeferred<void>();
+    let pauseNextRegister = false;
+    const persistence = createMemoryStore({
+      beforeRegister: async () => {
+        if (!pauseNextRegister) {
+          return;
+        }
+        pauseNextRegister = false;
+        paused.resolve();
+        await resume.promise;
+      },
+    });
+    const store = new WorkboardStore(persistence);
+    const host = new WorkboardStore(persistence);
+    const assigned = await store.create({
+      title: "Assigned",
+      agentId: "worker",
+      status: "ready",
+      workspaceAccess: { unrestricted: true },
+    });
+    const unrelated = await store.create({ title: "Unrelated", agentId: "worker" });
+    const gate = await store.create({ title: "Queue gate" });
+    let workerSessionKey = "";
+    const run = vi.fn().mockImplementation(async (input: { sessionKey: string }) => {
+      workerSessionKey = input.sessionKey;
+      return { runId: "run-authority-proof", sessionKey: input.sessionKey };
+    });
+
+    await dispatchAndStartWorkboardCards({
+      store,
+      subagent: { run },
+      options: { cardId: assigned.id, now: 10, maxStarts: 1 },
+    });
+    expect(workerSessionKey).toContain(`subagent:workboard-default-${assigned.id}`);
+    const claimedAssigned = await store.get(assigned.id);
+    const assignedToken = claimedAssigned?.metadata?.claim?.token;
+    expect(assignedToken).toEqual(expect.any(String));
+    const workerTools = toolMap(store, { agentId: "worker", sessionKey: workerSessionKey });
+    await expect(
+      workerTools.get("workboard_heartbeat")?.execute("assigned-heartbeat", {
+        id: assigned.id,
+        token: assignedToken,
+      }),
+    ).resolves.toBeDefined();
+
+    const operatorTools = toolMap(store, { agentId: "worker", sessionKey: "agent:worker:main" });
+    await expect(
+      operatorTools.get("workboard_move")?.execute("operator-recovery", {
+        id: unrelated.id,
+        status: "ready",
+      }),
+    ).resolves.toBeDefined();
+
+    pauseNextRegister = true;
+    const gateMutation = store.update(gate.id, { notes: "Hold the mutation queue." });
+    await paused.promise;
+    const queuedHeartbeat = workerTools.get("workboard_heartbeat")?.execute("queued-heartbeat", {
+      id: assigned.id,
+      token: assignedToken,
+    });
+    await Promise.resolve();
+    await host.update(assigned.id, {
+      sessionKey: "agent:worker:subagent:workboard-default-reassigned",
+    });
+    const reassigned = await host.get(assigned.id);
+    resume.resolve();
+    await gateMutation;
+    await expect(queuedHeartbeat).rejects.toThrow("no longer assigned");
+    await expect(host.get(assigned.id)).resolves.toEqual(reassigned);
   });
 });

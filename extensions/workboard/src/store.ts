@@ -14,7 +14,6 @@ import type {
 import { createWorkboardSqliteStores } from "./sqlite-store.js";
 import {
   buildWorkerContext,
-  assertCanMutateClaimedCard,
   cardBoardId,
   cardRunId,
   cardSessionKey,
@@ -40,6 +39,7 @@ import type {
   WorkboardDispatchResult,
   WorkboardMutationScope,
 } from "./store-inputs.js";
+import { assertCanMutateClaimedCard } from "./store-mutation-scope.js";
 import { capText, normalizeBoardId, normalizeTimestamp } from "./store-normalizers.js";
 import { WorkboardNotificationStore } from "./store-notifications.js";
 

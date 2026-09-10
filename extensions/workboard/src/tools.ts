@@ -17,6 +17,11 @@ import {
   createWorkboardMoveTool,
   strictObject,
 } from "./tools-card-mutations.js";
+import {
+  dispatchedMutationScope,
+  type DispatchedWorkerBinding,
+  type WorkboardToolMutationScope,
+} from "./tools-dispatched-scope.js";
 import { createWorkboardOrchestrationTools } from "./tools-orchestration.js";
 
 function contextOwner(ctx: OpenClawPluginToolContext | undefined): string {
@@ -33,11 +38,6 @@ function canMutateCard(card: WorkboardCard, ownerId: string, token?: string): bo
   const claim = card.metadata?.claim;
   return !claim || claim.ownerId === ownerId || safeEqualSecret(token, claim.token);
 }
-
-type DispatchedWorkerBinding = {
-  cardId?: string;
-  sessionKey?: string;
-};
 
 const DISPATCHED_WORKER_DENIED_TOOL_NAMES = new Set([
   "workboard_board_create",
@@ -207,7 +207,7 @@ type WorkboardToolCardParams = {
   record: Record<string, unknown>;
   id: string;
   token?: string;
-  scope: { ownerId: string; token?: string };
+  scope: WorkboardToolMutationScope;
 };
 type WorkboardToolCardParamsReader = (rawParams: unknown) => Promise<WorkboardToolCardParams>;
 type WorkboardCardMutation = (
@@ -262,15 +262,33 @@ export function createWorkboardTools(params: {
   const dispatchedWorkerBinding = readDispatchedWorkerBinding(params.context);
   const readScopedCardToolParams = async (rawParams: unknown): Promise<WorkboardToolCardParams> => {
     const input = readCardToolParams(rawParams, ownerId);
-    await requireScopedCard(store, input.id, ownerId, input.token, dispatchedWorkerBinding);
-    return input;
+    const card = await requireScopedCard(
+      store,
+      input.id,
+      ownerId,
+      input.token,
+      dispatchedWorkerBinding,
+    );
+    return {
+      ...input,
+      scope: dispatchedMutationScope(input.scope, card, dispatchedWorkerBinding),
+    };
   };
   const readClaimedCardToolParams = async (
     rawParams: unknown,
   ): Promise<WorkboardToolCardParams> => {
     const input = readCardToolParams(rawParams, ownerId);
-    await requireClaimedCard(store, input.id, ownerId, input.token, dispatchedWorkerBinding);
-    return input;
+    const card = await requireClaimedCard(
+      store,
+      input.id,
+      ownerId,
+      input.token,
+      dispatchedWorkerBinding,
+    );
+    return {
+      ...input,
+      scope: dispatchedMutationScope(input.scope, card, dispatchedWorkerBinding),
+    };
   };
   const runCardMutation = async (
     rawParams: unknown,
@@ -361,6 +379,10 @@ export function createWorkboardTools(params: {
       execute: async (_toolCallId, rawParams) => {
         const record = rawParams as Record<string, unknown>;
         const parents = readParentIds(record.parents);
+        let scope: WorkboardToolMutationScope = {
+          ownerId,
+          token: record.token as string | undefined,
+        };
         if (dispatchedWorkerBinding) {
           const boundCard = await resolveDispatchedWorkerCard(store, dispatchedWorkerBinding);
           if (
@@ -372,11 +394,10 @@ export function createWorkboardTools(params: {
               "dispatched Workboard workers may create only children explicitly linked to their assigned card.",
             );
           }
+          scope = dispatchedMutationScope(scope, boundCard, dispatchedWorkerBinding);
         }
         return jsonResult({
-          card: redactClaimToken(
-            await store.create(record, { ownerId, token: record.token as string | undefined }),
-          ),
+          card: redactClaimToken(await store.create(record, scope)),
         });
       },
     },
@@ -397,6 +418,7 @@ export function createWorkboardTools(params: {
         const parentId = readStringParam(record, "parentId", { required: true });
         const childId = readStringParam(record, "childId", { required: true });
         const token = record.token as string | undefined;
+        let scope: WorkboardToolMutationScope = { ownerId, token };
         if (dispatchedWorkerBinding) {
           const parent = await requireDispatchedWorkerTarget(
             store,
@@ -409,9 +431,10 @@ export function createWorkboardTools(params: {
               "dispatched Workboard workers may link only children derived from their assigned card.",
             );
           }
+          scope = dispatchedMutationScope(scope, parent, dispatchedWorkerBinding);
         }
         return jsonResult({
-          card: redactClaimToken(await store.linkCards(parentId, childId, { ownerId, token })),
+          card: redactClaimToken(await store.linkCards(parentId, childId, scope)),
         });
       },
     },
@@ -446,11 +469,11 @@ export function createWorkboardTools(params: {
       execute: async (_toolCallId, rawParams) => {
         const record = rawParams as Record<string, unknown>;
         const id = readStringParam(record, "id", { required: true });
-        await requireDispatchedWorkerTarget(store, id, dispatchedWorkerBinding);
-        const claimed = await store.claim(id, {
-          ownerId,
-          ttlSeconds: record.ttlSeconds,
-        });
+        const boundCard = await requireDispatchedWorkerTarget(store, id, dispatchedWorkerBinding);
+        const scope = boundCard
+          ? dispatchedMutationScope({ ownerId }, boundCard, dispatchedWorkerBinding)
+          : { ownerId };
+        const claimed = await store.claim(id, { ...scope, ttlSeconds: record.ttlSeconds });
         return jsonResult({ ...claimed, card: redactClaimToken(claimed.card) });
       },
     },

@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { WorkboardCard } from "@openclaw/workboard-contract";
-import { assertCanMutateClaimedCard } from "./store-card-helpers.js";
 import { MAX_CARD_COMMENTS } from "./store-constants.js";
 import { WorkboardEnrichmentStore } from "./store-enrichment.js";
 import type { WorkboardMutationScope, WorkboardPromoteInput } from "./store-inputs.js";
+import { assertCanMutateClaimedCard } from "./store-mutation-scope.js";
 import { clearDiagnostics, normalizeBoundedString } from "./store-normalizers.js";
 
 export class WorkboardPromoteStore extends WorkboardEnrichmentStore {
