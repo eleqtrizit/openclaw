@@ -275,6 +275,46 @@ describe("dispatched Workboard worker confinement", () => {
     );
   });
 
+  it("rejects worker diagnostic refresh without side effects and preserves operator refresh", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const assigned = await linkDispatchedCard(
+      store,
+      await store.create({ title: "Assigned", agentId: "worker" }),
+    );
+    const unrelated = await store.create({
+      title: "Completed without proof",
+      agentId: "other",
+      status: "done",
+    });
+    const workerTools = toolMap(store, {
+      agentId: "worker",
+      sessionKey: workboardSessionKeyForCard(assigned),
+    });
+
+    await expect(
+      workerTools.get("workboard_list")?.execute("worker-refresh", { refreshDiagnostics: true }),
+    ).rejects.toThrow("cannot refresh board-wide diagnostics");
+    await expect(store.get(unrelated.id)).resolves.toEqual(unrelated);
+
+    await expect(
+      workerTools.get("workboard_list")?.execute("worker-read", {}),
+    ).resolves.toBeDefined();
+    const operatorTools = toolMap(store, {
+      agentId: "operator",
+      sessionKey: "agent:operator:main",
+    });
+    await expect(
+      operatorTools
+        .get("workboard_list")
+        ?.execute("operator-refresh", { refreshDiagnostics: true }),
+    ).resolves.toBeDefined();
+    await expect(store.get(unrelated.id)).resolves.toMatchObject({
+      metadata: {
+        diagnostics: expect.arrayContaining([expect.objectContaining({ kind: "missing_proof" })]),
+      },
+    });
+  });
+
   it("carries dispatcher-owned identity to tools and revalidates it at queued persistence", async () => {
     const paused = createDeferred<void>();
     const resume = createDeferred<void>();

@@ -625,6 +625,14 @@ export function createWorkboardTools(params: {
     const execute = tool.execute;
     tool.execute = (...args) =>
       store.runOperation(async () => {
+        const record = asOptionalRecord(args[1]);
+        if (
+          dispatchedWorkerBinding &&
+          tool.name === "workboard_list" &&
+          record?.refreshDiagnostics === true
+        ) {
+          throw new Error("dispatched Workboard workers cannot refresh board-wide diagnostics.");
+        }
         if (dispatchedWorkerBinding && DISPATCHED_WORKER_DENIED_TOOL_NAMES.has(tool.name)) {
           throw new Error(
             "dispatched Workboard workers cannot create, link, decompose, or run board-wide mutation operations.",
