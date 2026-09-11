@@ -24,7 +24,6 @@ import {
 import {
   REEF_DELIVERED_MAX_ENTRIES,
   REEF_DELIVERED_NAMESPACE,
-  REEF_DELIVERED_PENDING_NAMESPACE,
   REEF_DELIVERED_TTL_MS,
   openStores,
 } from "./state.js";
@@ -151,8 +150,9 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
 
     // Capacity frees (marker TTL expiry in production; explicit free here).
     // Reopen with the same options the flow's reservation store uses (cap 2).
+    // Namespace literal mirrors the internal REEF_DELIVERED_PENDING_NAMESPACE.
     const raw = stores.runtime.state.openSyncKeyedStore<{ id: string }>({
-      namespace: REEF_DELIVERED_PENDING_NAMESPACE,
+      namespace: "delivered-pending",
       maxEntries: 2,
       overflowPolicy: "reject-new",
       defaultTtlMs: REEF_DELIVERED_TTL_MS,

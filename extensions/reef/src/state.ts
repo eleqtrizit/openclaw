@@ -43,7 +43,7 @@ export const REEF_DELIVERED_NAMESPACE = "delivered";
 // Reservations live in their own namespace so the delivered namespace keeps its
 // exact historical record shape: older readers that treat any stored id as a
 // completed delivery can never mistake an unconfirmed reservation for one.
-export const REEF_DELIVERED_PENDING_NAMESPACE = "delivered-pending";
+const REEF_DELIVERED_PENDING_NAMESPACE = "delivered-pending";
 export const REEF_DELIVERED_MAX_ENTRIES = 5_000;
 export const REEF_DELIVERED_TTL_MS = REEF_REPLAY_TTL_MS;
 const REEF_INBOX_CURSOR_NAMESPACE = "inbox-cursor";
