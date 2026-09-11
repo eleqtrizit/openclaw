@@ -34,7 +34,7 @@ export function resetFlowStoresForTests(): void {
   }
 }
 
-export function flowStores() {
+export function flowStores(deliveredMaxEntries?: number) {
   const stateDir = fs.mkdtempSync(path.join(resolvePreferredOpenClawTmpDir(), "reef-flow-"));
   stateDirs.push(stateDir);
   const runtime = createPluginRuntimeMock();
@@ -45,7 +45,10 @@ export function flowStores() {
     });
   return {
     reviews: new ReviewApprovalStore(runtime),
-    delivered: new ReefDeliveredStore(runtime),
+    delivered:
+      deliveredMaxEntries === undefined
+        ? new ReefDeliveredStore(runtime)
+        : new ReefDeliveredStore(runtime, deliveredMaxEntries),
   };
 }
 

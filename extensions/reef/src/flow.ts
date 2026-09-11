@@ -432,15 +432,40 @@ export class ReefMessageFlow {
       if (error instanceof PipelineError && isParkedInboundPipelineError(error)) {
         throw new ReefInboxEntryParkedError(error.message);
       }
+      if (isPluginStateCapacityError(error)) {
+        // Shared replay state is at capacity. Park instead of tearing down the
+        // shared inbox: the entry stays un-acked at the relay and re-polls
+        // without head-of-line blocking entries from other peers.
+        throw new ReefInboxEntryParkedError(
+          "Reef replay state is at capacity; entry parked for retry",
+        );
+      }
       throw error;
     }
     if (!result.body) {
       await this.options.transport.acknowledge(relayPeer, envelope.id, result.receipt);
       return;
     }
-    if (await this.options.delivered.has(envelope.id)) {
+    const markerState = await this.options.delivered.status(envelope.id);
+    if (markerState === "delivered") {
       await this.options.transport.acknowledge(relayPeer, envelope.id, result.receipt);
       return;
+    }
+    if (markerState === undefined) {
+      // Durable delivery outcome before inbound handling: reserve the marker
+      // first so a capacity failure parks the entry before ingress can fire,
+      // and a retried already-handled entry is classified by marker state
+      // instead of re-entering inbound handling without a durable outcome.
+      try {
+        await this.options.delivered.reserve(envelope.id);
+      } catch (error) {
+        if (isPluginStateCapacityError(error)) {
+          throw new ReefInboxEntryParkedError(
+            "Reef delivered-marker store is at capacity; entry parked for retry",
+          );
+        }
+        throw error;
+      }
     }
     const budget = autonomyBudget(friend.autonomy);
     if (budget.notifyOnly) {
@@ -458,7 +483,7 @@ export class ReefMessageFlow {
         autonomy: friend.autonomy,
       });
     }
-    await this.options.delivered.add(envelope.id);
+    await this.options.delivered.confirm(envelope.id);
     await this.options.transport.acknowledge(relayPeer, envelope.id, result.receipt);
   }
 
@@ -497,5 +522,13 @@ function isParkedInboundPipelineError(error: PipelineError): boolean {
     error.stage === "guard" &&
     error.verdict?.decision === "deny" &&
     error.verdict.category === "guard_failure"
+  );
+}
+
+// PluginStateStoreError is not part of the plugin SDK import surface; its
+// stable error code identifies bounded-store capacity exhaustion (reject-new).
+function isPluginStateCapacityError(error: unknown): boolean {
+  return (
+    error instanceof Error && (error as { code?: unknown }).code === "PLUGIN_STATE_LIMIT_EXCEEDED"
   );
 }

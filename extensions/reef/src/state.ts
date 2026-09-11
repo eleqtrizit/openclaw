@@ -495,11 +495,13 @@ export class ReviewApprovalStore {
   }
 }
 
+type ReefDeliveredMarker = { id: string; state?: "pending" | "delivered" };
+
 export class ReefDeliveredStore {
-  readonly #store: PluginStateSyncKeyedStore<{ id: string }>;
+  readonly #store: PluginStateSyncKeyedStore<ReefDeliveredMarker>;
 
   constructor(runtime: PluginRuntime, maxEntries = REEF_DELIVERED_MAX_ENTRIES) {
-    this.#store = runtime.state.openSyncKeyedStore<{ id: string }>({
+    this.#store = runtime.state.openSyncKeyedStore<ReefDeliveredMarker>({
       namespace: REEF_DELIVERED_NAMESPACE,
       maxEntries,
       overflowPolicy: "reject-new",
@@ -513,11 +515,47 @@ export class ReefDeliveredStore {
     return this.#store.lookup(id)?.id === id;
   }
 
-  async add(id: string): Promise<void> {
+  // Markers persisted before two-phase delivery (doctor legacy import, earlier
+  // releases) carry no state and mean the message was fully delivered.
+  async status(id: string): Promise<"delivered" | "pending" | undefined> {
+    const record = this.#store.lookup(id);
+    if (record?.id !== id) {
+      return undefined;
+    }
+    return record.state ?? "delivered";
+  }
+
+  // Reserve the delivery marker BEFORE inbound handling. Capacity failures
+  // propagate so the caller can park the entry as a retry-safe domain state
+  // instead of unwinding the shared inbox after ingress already ran.
+  async reserve(id: string): Promise<void> {
     if (this.#store.lookup(id)?.id === id) {
       return;
     }
-    if (!this.#store.registerIfAbsent(id, { id }) && this.#store.lookup(id)?.id !== id) {
+    const inserted = this.#store.registerIfAbsent(id, { id, state: "pending" });
+    if (!inserted && this.#store.lookup(id)?.id !== id) {
+      throw new Error("Failed persisting Reef delivered marker");
+    }
+  }
+
+  async confirm(id: string): Promise<void> {
+    const update = this.#store.update;
+    if (!update) {
+      throw new Error("Reef delivered state requires atomic plugin-state updates");
+    }
+    update(id, (current) => (current?.id === id ? { id, state: "delivered" } : current));
+  }
+
+  async add(id: string): Promise<void> {
+    const existing = this.#store.lookup(id);
+    if (existing?.id === id) {
+      if (existing.state === "pending") {
+        await this.confirm(id);
+      }
+      return;
+    }
+    this.#store.registerIfAbsent(id, { id, state: "delivered" });
+    if (this.#store.lookup(id)?.id !== id) {
       throw new Error("Failed persisting Reef delivered marker");
     }
   }

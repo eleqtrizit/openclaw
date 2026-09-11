@@ -9,6 +9,7 @@ import {
   open,
   sha256Hex,
   verifyReceipt,
+  type ReplayStore,
   type Verdict,
 } from "../protocol/index.js";
 import { ReefChannelConfigSchema } from "./config-schema.js";
@@ -27,7 +28,7 @@ import {
 } from "./flow.test-helpers.js";
 import { createConfiguredGuard } from "./guard.js";
 import { setReefRuntime } from "./runtime.js";
-import type { ReefTransportClient } from "./transport.js";
+import { ReefInboxEntryParkedError, type ReefTransportClient } from "./transport.js";
 import type { InboxEntry } from "./types.js";
 
 const oauthGuardModel = "gpt-5.6-terra";
@@ -711,5 +712,131 @@ describe("ReefMessageFlow outbound", () => {
     });
     expect(onPlatformSendDispatch).not.toHaveBeenCalled();
     expect(relay.sendEnvelope).not.toHaveBeenCalled();
+  });
+});
+
+describe("ReefMessageFlow delivery-store capacity", () => {
+  beforeEach(() => {
+    resetFlowStoresForTests();
+  });
+
+  afterEach(() => {
+    resetFlowStoresForTests();
+  });
+
+  it("parks a new inbound message before ingress when the delivered-marker store is at capacity", async () => {
+    const alice = generateIdentity();
+    const bob = reefKeys();
+    const id = "01JZ0000000000000000000201";
+    const stores = flowStores(1);
+    await stores.delivered.add("occupied");
+    const onIngress = vi.fn(async () => {});
+    const relay = transport();
+    const flow = new ReefMessageFlow({
+      config: config(),
+      trust: trust({ alice: peerTrust(alice) }).store,
+      keys: bob,
+      transport: relay as unknown as ReefTransportClient,
+      guard: guard(allow),
+      audit: new MemoryAuditStore(new Uint8Array(32).fill(20)),
+      replay: new MemoryReplayStore(),
+      ...stores,
+      onIngress,
+      onOwnerNotice: async () => {},
+    });
+    const entry: InboxEntry = {
+      seq: 1,
+      peer: "alice",
+      id,
+      kind: "message",
+      envelope: await envelope(alice, bob, id, "should park, not re-enter"),
+      ts: Math.floor(Date.now() / 1_000),
+    };
+
+    await expect(flow.processEntries([entry])).rejects.toBeInstanceOf(ReefInboxEntryParkedError);
+    // Capacity failure must park BEFORE inbound handling: no dispatch, no ack.
+    expect(onIngress).not.toHaveBeenCalled();
+    expect(relay.acknowledge).not.toHaveBeenCalled();
+    await expect(stores.delivered.status(id)).resolves.toBeUndefined();
+  });
+
+  it("parks an inbound message before ingress when replay state is at capacity", async () => {
+    const alice = generateIdentity();
+    const bob = reefKeys();
+    const id = "01JZ0000000000000000000202";
+    const stores = flowStores();
+    const onIngress = vi.fn(async () => {});
+    const relay = transport();
+    const fullReplay = {
+      claim: async () => {
+        throw Object.assign(new Error("plugin state limit exceeded"), {
+          code: "PLUGIN_STATE_LIMIT_EXCEEDED",
+        });
+      },
+    } as unknown as ReplayStore;
+    const flow = new ReefMessageFlow({
+      config: config(),
+      trust: trust({ alice: peerTrust(alice) }).store,
+      keys: bob,
+      transport: relay as unknown as ReefTransportClient,
+      guard: guard(allow),
+      audit: new MemoryAuditStore(new Uint8Array(32).fill(21)),
+      replay: fullReplay,
+      ...stores,
+      onIngress,
+      onOwnerNotice: async () => {},
+    });
+    const entry: InboxEntry = {
+      seq: 1,
+      peer: "alice",
+      id,
+      kind: "message",
+      envelope: await envelope(alice, bob, id, "replay store is full"),
+      ts: Math.floor(Date.now() / 1_000),
+    };
+
+    await expect(flow.processEntries([entry])).rejects.toBeInstanceOf(ReefInboxEntryParkedError);
+    expect(onIngress).not.toHaveBeenCalled();
+    expect(relay.acknowledge).not.toHaveBeenCalled();
+  });
+
+  it("reserves the delivery marker before ingress and confirms after, so retried entries never re-enter ingress", async () => {
+    const alice = generateIdentity();
+    const bob = reefKeys();
+    const id = "01JZ0000000000000000000203";
+    const stores = flowStores();
+    let statusDuringIngress: "delivered" | "pending" | undefined;
+    const onIngress = vi.fn(async () => {
+      statusDuringIngress = await stores.delivered.status(id);
+    });
+    const relay = transport();
+    const flow = new ReefMessageFlow({
+      config: config(),
+      trust: trust({ alice: peerTrust(alice) }).store,
+      keys: bob,
+      transport: relay as unknown as ReefTransportClient,
+      guard: guard(allow),
+      audit: new MemoryAuditStore(new Uint8Array(32).fill(22)),
+      replay: new MemoryReplayStore(),
+      ...stores,
+      onIngress,
+      onOwnerNotice: async () => {},
+    });
+    const entry: InboxEntry = {
+      seq: 1,
+      peer: "alice",
+      id,
+      kind: "message",
+      envelope: await envelope(alice, bob, id, "durable outcome first"),
+      ts: Math.floor(Date.now() / 1_000),
+    };
+
+    await flow.processEntries([entry]);
+    // The marker is durably reserved before inbound handling runs.
+    expect(statusDuringIngress).toBe("pending");
+    await expect(stores.delivered.status(id)).resolves.toBe("delivered");
+
+    await flow.processEntries([{ ...entry, seq: 2 }]);
+    expect(onIngress).toHaveBeenCalledOnce();
   });
 });

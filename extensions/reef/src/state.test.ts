@@ -28,9 +28,11 @@ import {
   loadReefSetupSession,
   openStores,
   finalizeReefIdentityBinding,
+  REEF_DELIVERED_MAX_ENTRIES,
   REEF_DELIVERED_NAMESPACE,
   ReefInboxCursorStore,
   REEF_REPLAY_TTL_MS,
+  REEF_DELIVERED_TTL_MS,
   REEF_REVIEWS_NAMESPACE,
   releaseReefIdentityReservation,
   reserveReefIdentityBinding,
@@ -634,5 +636,65 @@ describe("Reef SQLite state", () => {
     await store.request(third);
 
     await expect(store.list()).resolves.toEqual([second, third]);
+  });
+});
+
+describe("Reef delivered marker two-phase delivery", () => {
+  let stateDir = "";
+
+  beforeEach(() => {
+    resetPluginStateStoreForTests();
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-reef-state-"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    resetPluginStateStoreForTests();
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  function testKeys() {
+    const identity = generateIdentity();
+    return { ...identity, auditKey, replayKey, keyEpoch: 1 };
+  }
+
+  it("reserves before delivery and confirms after, keeping states distinct", async () => {
+    const stores = openStores(createRuntime(stateDir), testKeys());
+    await stores.delivered.reserve("m1");
+    await expect(stores.delivered.status("m1")).resolves.toBe("pending");
+    await expect(stores.delivered.has("m1")).resolves.toBe(true);
+    await stores.delivered.confirm("m1");
+    await expect(stores.delivered.status("m1")).resolves.toBe("delivered");
+    // Idempotent reserve keeps a confirmed marker delivered.
+    await stores.delivered.reserve("m1");
+    await expect(stores.delivered.status("m1")).resolves.toBe("delivered");
+    await stores.delivered.add("m2");
+    await expect(stores.delivered.status("m2")).resolves.toBe("delivered");
+  });
+
+  it("surfaces capacity as PLUGIN_STATE_LIMIT_EXCEEDED from reserve without touching existing markers", async () => {
+    const stores = openStores(createRuntime(stateDir), testKeys(), {
+      deliveredMaxEntries: 1,
+    });
+    await stores.delivered.add("first");
+    await expect(stores.delivered.reserve("second")).rejects.toMatchObject({
+      code: "PLUGIN_STATE_LIMIT_EXCEEDED",
+    });
+    await expect(stores.delivered.status("first")).resolves.toBe("delivered");
+    await expect(stores.delivered.status("second")).resolves.toBeUndefined();
+  });
+
+  it("reads legacy delivered markers without a state as delivered", async () => {
+    const runtime = createRuntime(stateDir);
+    const stores = openStores(runtime, testKeys());
+    const legacy = runtime.state.openSyncKeyedStore<{ id: string }>({
+      namespace: REEF_DELIVERED_NAMESPACE,
+      maxEntries: REEF_DELIVERED_MAX_ENTRIES,
+      overflowPolicy: "reject-new",
+      defaultTtlMs: REEF_DELIVERED_TTL_MS,
+    });
+    await legacy.registerIfAbsent("legacy-1", { id: "legacy-1" });
+    await expect(stores.delivered.status("legacy-1")).resolves.toBe("delivered");
+    await expect(stores.delivered.has("legacy-1")).resolves.toBe(true);
   });
 });
