@@ -26,6 +26,7 @@ import {
 import {
   REEF_DELIVERED_MAX_ENTRIES,
   REEF_DELIVERED_NAMESPACE,
+  REEF_DELIVERED_PENDING_NAMESPACE,
   REEF_DELIVERED_TTL_MS,
 } from "./state.js";
 import { ReefInboxConnection, type ReefTransportClient } from "./transport.js";
@@ -96,8 +97,8 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
     const idA = "01JZ00000000000000000002A1";
     const idC = "01JZ00000000000000000002C1";
     const stores = flowStores(2);
-    await stores.delivered.add("occupied-1");
-    await stores.delivered.add("occupied-2");
+    await stores.delivered.reserve("occupied-1");
+    await stores.delivered.reserve("occupied-2");
 
     const entries = new Map<number, InboxEntry>([
       [1, messageEntry(1, "alice", await envelopeFrom(alice, "alice", bob, idA, "first"), idA)],
@@ -138,9 +139,9 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
     expect(persisted).toEqual([]);
 
     // Capacity frees (marker TTL expiry in production; explicit free here).
-    // Reopen with the same options the flow's delivered store uses (cap 2).
+    // Reopen with the same options the flow's reservation store uses (cap 2).
     const raw = stores.runtime.state.openSyncKeyedStore<{ id: string }>({
-      namespace: REEF_DELIVERED_NAMESPACE,
+      namespace: REEF_DELIVERED_PENDING_NAMESPACE,
       maxEntries: 2,
       overflowPolicy: "reject-new",
       defaultTtlMs: REEF_DELIVERED_TTL_MS,

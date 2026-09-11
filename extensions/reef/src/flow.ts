@@ -483,7 +483,18 @@ export class ReefMessageFlow {
         autonomy: friend.autonomy,
       });
     }
-    await this.options.delivered.confirm(envelope.id);
+    try {
+      await this.options.delivered.confirm(envelope.id);
+    } catch (error) {
+      if (isPluginStateCapacityError(error)) {
+        // The reservation remains pending, so the re-poll re-ingresses and
+        // retries the confirmed marker instead of unwinding the shared inbox.
+        throw new ReefInboxEntryParkedError(
+          "Reef delivered-marker store is at capacity; entry parked for retry",
+        );
+      }
+      throw error;
+    }
     await this.options.transport.acknowledge(relayPeer, envelope.id, result.receipt);
   }
 

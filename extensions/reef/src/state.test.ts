@@ -662,9 +662,11 @@ describe("Reef delivered marker two-phase delivery", () => {
     const stores = openStores(createRuntime(stateDir), testKeys());
     await stores.delivered.reserve("m1");
     await expect(stores.delivered.status("m1")).resolves.toBe("pending");
-    await expect(stores.delivered.has("m1")).resolves.toBe(true);
+    // A reservation is not a delivery: older readers must not suppress it.
+    await expect(stores.delivered.has("m1")).resolves.toBe(false);
     await stores.delivered.confirm("m1");
     await expect(stores.delivered.status("m1")).resolves.toBe("delivered");
+    await expect(stores.delivered.has("m1")).resolves.toBe(true);
     // Idempotent reserve keeps a confirmed marker delivered.
     await stores.delivered.reserve("m1");
     await expect(stores.delivered.status("m1")).resolves.toBe("delivered");
@@ -672,16 +674,25 @@ describe("Reef delivered marker two-phase delivery", () => {
     await expect(stores.delivered.status("m2")).resolves.toBe("delivered");
   });
 
-  it("surfaces capacity as PLUGIN_STATE_LIMIT_EXCEEDED from reserve without touching existing markers", async () => {
+  it("surfaces capacity as PLUGIN_STATE_LIMIT_EXCEEDED from reserve and confirm without touching existing markers", async () => {
     const stores = openStores(createRuntime(stateDir), testKeys(), {
       deliveredMaxEntries: 1,
     });
-    await stores.delivered.add("first");
-    await expect(stores.delivered.reserve("second")).rejects.toMatchObject({
+    await stores.delivered.add("first"); // delivered namespace full
+    // Reservations have their own capacity: one fits, the next fails closed.
+    await stores.delivered.reserve("second");
+    await expect(stores.delivered.status("second")).resolves.toBe("pending");
+    await expect(stores.delivered.reserve("third")).rejects.toMatchObject({
       code: "PLUGIN_STATE_LIMIT_EXCEEDED",
     });
+    // Confirming into a full delivered namespace fails closed and keeps the
+    // reservation pending for retry.
+    await expect(stores.delivered.confirm("second")).rejects.toMatchObject({
+      code: "PLUGIN_STATE_LIMIT_EXCEEDED",
+    });
+    await expect(stores.delivered.status("second")).resolves.toBe("pending");
     await expect(stores.delivered.status("first")).resolves.toBe("delivered");
-    await expect(stores.delivered.status("second")).resolves.toBeUndefined();
+    await expect(stores.delivered.status("third")).resolves.toBeUndefined();
   });
 
   it("reads legacy delivered markers without a state as delivered", async () => {
