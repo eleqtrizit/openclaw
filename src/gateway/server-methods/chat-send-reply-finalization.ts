@@ -1,7 +1,10 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { getReplyPayloadMetadata, type ReplyPayload } from "../../auto-reply/reply-payload.js";
 import { applyAssistantDeliveryDirectives } from "../../config/sessions/transcript-assistant-delivery.js";
-import { getAgentScopedMediaLocalRootsForSources } from "../../media/local-roots.js";
+import {
+  appendLocalMediaParentRoots,
+  getAgentScopedMediaLocalRoots,
+} from "../../media/local-roots.js";
 import { appendChatCanvasBlocksToMessage } from "../chat-display-projection.canvas.js";
 import { attachManagedOutgoingMediaToMessage } from "../managed-image-attachments.js";
 import { loadSessionEntry } from "../session-utils.js";
@@ -255,11 +258,10 @@ export async function finalizeChatSendDispatchedReplies(params: {
       : loadSessionEntry(sessionKey, sessionLoadOptions);
   const { storePath: latestStorePath, entry: latestEntry } = resolvedTranscriptSession;
   const sessionId = latestEntry?.sessionId ?? backingSessionId ?? clientRunId;
-  const mediaLocalRoots = getAgentScopedMediaLocalRootsForSources({
-    cfg,
-    agentId: transcriptAgentId,
-    mediaSources: latestStorePath ? [latestStorePath] : undefined,
-  });
+  const mediaLocalRoots = appendLocalMediaParentRoots(
+    getAgentScopedMediaLocalRoots(cfg, transcriptAgentId),
+    latestStorePath ? [latestStorePath] : undefined,
+  );
   let managedMediaPrepareFailed = false;
   const mediaMessage = await buildWebchatAssistantMessageFromReplyPayloads(finalPayloads, {
     localRoots: mediaLocalRoots,

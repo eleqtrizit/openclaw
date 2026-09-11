@@ -159,6 +159,8 @@ export function createReplyMediaPathNormalizer(params: {
         containerWorkdir: params.sandboxContainerWorkdir,
         // Explicit sandbox roots carry no access metadata; fail closed so host-workspace
         // staging cannot be reached through sandboxed send paths.
+        // SAFETY: explicit roots have no session access metadata; "none" is the fail-closed
+        // default matching the documented explicit-root compatibility posture.
         workspaceAccess: "none" as SandboxWorkspaceAccess,
       })
     : undefined;
