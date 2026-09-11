@@ -640,7 +640,7 @@ describe("Reef SQLite state", () => {
   });
 });
 
-describe("Reef delivered marker two-phase delivery", () => {
+describe("Reef delivered markers", () => {
   let stateDir = "";
 
   beforeEach(() => {
@@ -659,17 +659,14 @@ describe("Reef delivered marker two-phase delivery", () => {
     return { ...identity, auditKey, replayKey, keyEpoch: 1 };
   }
 
-  it("reserves before delivery and confirms after, keeping states distinct", async () => {
+  it("confirms delivered markers idempotently", async () => {
     const stores = openStores(createRuntime(stateDir), testKeys());
-    await stores.delivered.reserve("m1");
-    await expect(stores.delivered.status("m1")).resolves.toBe("pending");
-    // A reservation is not a delivery: older readers must not suppress it.
+    await expect(stores.delivered.status("m1")).resolves.toBeUndefined();
     await expect(stores.delivered.has("m1")).resolves.toBe(false);
     await stores.delivered.confirm("m1");
     await expect(stores.delivered.status("m1")).resolves.toBe("delivered");
     await expect(stores.delivered.has("m1")).resolves.toBe(true);
-    // Idempotent reserve keeps a confirmed marker delivered.
-    await stores.delivered.reserve("m1");
+    await stores.delivered.confirm("m1");
     await expect(stores.delivered.status("m1")).resolves.toBe("delivered");
     await stores.delivered.add("m2");
     await expect(stores.delivered.status("m2")).resolves.toBe("delivered");
@@ -680,28 +677,22 @@ describe("Reef delivered marker two-phase delivery", () => {
       deliveredMaxEntries: 1,
     });
     await stores.delivered.add("first"); // delivered namespace full
-    // Reservations are in-memory, so they never consume store capacity and
-    // reserve cannot fail; capacity surfaces from confirm.
-    await stores.delivered.reserve("second");
-    await expect(stores.delivered.status("second")).resolves.toBe("pending");
-    // Confirming into a full delivered namespace fails closed. The in-memory
-    // reservation stays pending, so the re-poll re-ingresses and retries the
-    // confirmed marker instead of unwinding the shared inbox.
+    // Confirming into a full delivered namespace fails closed. No marker is
+    // retained, so the re-poll re-ingresses before retrying confirmation.
     await expect(stores.delivered.confirm("second")).rejects.toMatchObject({
       code: "PLUGIN_STATE_LIMIT_EXCEEDED",
     });
-    await expect(stores.delivered.status("second")).resolves.toBe("pending");
+    await expect(stores.delivered.status("second")).resolves.toBeUndefined();
     await expect(stores.delivered.status("first")).resolves.toBe("delivered");
     await expect(stores.delivered.status("third")).resolves.toBeUndefined();
   });
 
-  it("parks confirm at the plugin-wide aggregate limit with the reservation retained", async () => {
+  it("parks confirm at the plugin-wide aggregate limit without retaining bookkeeping", async () => {
     const stores = openStores(createRuntime(stateDir), testKeys(), {
       deliveredMaxEntries: REEF_DELIVERED_MAX_ENTRIES,
     });
-    // Fill the plugin-wide aggregate limit from another namespace's row:
-    // reservations never occupy store rows, so confirm is the only step that
-    // needs one and the parked entry retries bounded, at-least-once.
+    // Fill the plugin-wide aggregate limit from another namespace's row. The
+    // parked entry keeps no separate bookkeeping and retries at-least-once.
     setMaxPluginStateEntriesPerPluginForTests(1);
     try {
       const other = createRuntime(stateDir).state.openSyncKeyedStore<{ id: string }>({
@@ -710,12 +701,11 @@ describe("Reef delivered marker two-phase delivery", () => {
         overflowPolicy: "reject-new",
       });
       other.registerIfAbsent("row-1", { id: "row-1" });
-      await stores.delivered.reserve("aggregate-1");
-      await expect(stores.delivered.status("aggregate-1")).resolves.toBe("pending");
+      await expect(stores.delivered.status("aggregate-1")).resolves.toBeUndefined();
       await expect(stores.delivered.confirm("aggregate-1")).rejects.toMatchObject({
         code: "PLUGIN_STATE_LIMIT_EXCEEDED",
       });
-      await expect(stores.delivered.status("aggregate-1")).resolves.toBe("pending");
+      await expect(stores.delivered.status("aggregate-1")).resolves.toBeUndefined();
     } finally {
       setMaxPluginStateEntriesPerPluginForTests();
     }

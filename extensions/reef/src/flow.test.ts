@@ -724,7 +724,7 @@ describe("ReefMessageFlow delivery-store capacity", () => {
     resetFlowStoresForTests();
   });
 
-  it("parks after ingress with the reservation kept pending when the delivered store fills before confirm", async () => {
+  it("parks after ingress without retaining bookkeeping when the delivered store fills before confirm", async () => {
     const alice = generateIdentity();
     const bob = reefKeys();
     const id = "01JZ0000000000000000000204";
@@ -754,12 +754,11 @@ describe("ReefMessageFlow delivery-store capacity", () => {
     };
 
     await expect(flow.processEntries([entry])).rejects.toBeInstanceOf(ReefInboxEntryParkedError);
-    // Ingress ran; the in-memory reservation stays pending across the failed
-    // confirm, so the entry parks and each re-poll re-ingresses and retries
-    // the confirmed marker instead of unwinding the shared inbox.
+    // Ingress ran, but no delivered marker was retained after confirm failed.
+    // Each re-poll re-ingests instead of unwinding the shared inbox.
     expect(onIngress).toHaveBeenCalledTimes(1);
     expect(relay.acknowledge).not.toHaveBeenCalled();
-    await expect(stores.delivered.status(id)).resolves.toBe("pending");
+    await expect(stores.delivered.status(id)).resolves.toBeUndefined();
   });
 
   it("parks an inbound message before ingress when replay state is at capacity", async () => {
@@ -802,12 +801,12 @@ describe("ReefMessageFlow delivery-store capacity", () => {
     expect(relay.acknowledge).not.toHaveBeenCalled();
   });
 
-  it("reserves the delivery marker before ingress and confirms after, so retried entries never re-enter ingress", async () => {
+  it("confirms the delivery marker after ingress, so delivered entries do not re-enter ingress", async () => {
     const alice = generateIdentity();
     const bob = reefKeys();
     const id = "01JZ0000000000000000000203";
     const stores = flowStores();
-    let statusDuringIngress: "delivered" | "pending" | undefined;
+    let statusDuringIngress: "delivered" | undefined;
     const onIngress = vi.fn(async () => {
       statusDuringIngress = await stores.delivered.status(id);
     });
@@ -834,8 +833,8 @@ describe("ReefMessageFlow delivery-store capacity", () => {
     };
 
     await flow.processEntries([entry]);
-    // The marker is durably reserved before inbound handling runs.
-    expect(statusDuringIngress).toBe("pending");
+    // The marker is written only after inbound handling succeeds.
+    expect(statusDuringIngress).toBeUndefined();
     await expect(stores.delivered.status(id)).resolves.toBe("delivered");
 
     await flow.processEntries([{ ...entry, seq: 2 }]);

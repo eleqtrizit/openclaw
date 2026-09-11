@@ -446,27 +446,9 @@ export class ReefMessageFlow {
       await this.options.transport.acknowledge(relayPeer, envelope.id, result.receipt);
       return;
     }
-    const markerState = await this.options.delivered.status(envelope.id);
-    if (markerState === "delivered") {
+    if ((await this.options.delivered.status(envelope.id)) === "delivered") {
       await this.options.transport.acknowledge(relayPeer, envelope.id, result.receipt);
       return;
-    }
-    if (markerState === undefined) {
-      // Reserve the marker before inbound handling so a retried
-      // already-handled entry is classified by marker state instead of
-      // re-entering inbound handling. In-flight reservations never consume
-      // store capacity, but any capacity error still parks the entry as a
-      // retry-safe domain state.
-      try {
-        await this.options.delivered.reserve(envelope.id);
-      } catch (error) {
-        if (isPluginStateCapacityError(error)) {
-          throw new ReefInboxEntryParkedError(
-            "Reef delivered-marker store is at capacity; entry parked for retry",
-          );
-        }
-        throw error;
-      }
     }
     const budget = autonomyBudget(friend.autonomy);
     if (budget.notifyOnly) {
@@ -488,8 +470,8 @@ export class ReefMessageFlow {
       await this.options.delivered.confirm(envelope.id);
     } catch (error) {
       if (isPluginStateCapacityError(error)) {
-        // The reservation remains pending, so the re-poll re-ingresses and
-        // retries the confirmed marker instead of unwinding the shared inbox.
+        // Failed confirm means no delivered marker persisted, so the re-poll
+        // re-ingests the entry instead of unwinding the shared inbox.
         throw new ReefInboxEntryParkedError(
           "Reef delivered-marker store is at capacity; entry parked for retry",
         );

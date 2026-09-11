@@ -497,12 +497,6 @@ export class ReviewApprovalStore {
 
 export class ReefDeliveredStore {
   readonly #delivered: PluginStateSyncKeyedStore<{ id: string }>;
-  // In-flight reservations are process-local: they classify entries within a
-  // single run while the persisted delivered markers and replay store carry
-  // the shipped cross-restart durability contract. A crash in the
-  // dispatch-confirm window re-dispatches once on restart — the same bounded
-  // at-least-once behavior the shipped store already exhibits.
-  readonly #reservations = new Set<string>();
 
   constructor(runtime: PluginRuntime, maxEntries = REEF_DELIVERED_MAX_ENTRIES) {
     this.#delivered = runtime.state.openSyncKeyedStore<{ id: string }>({
@@ -519,22 +513,8 @@ export class ReefDeliveredStore {
     return this.#delivered.lookup(id)?.id === id;
   }
 
-  async status(id: string): Promise<"delivered" | "pending" | undefined> {
-    if (this.#delivered.lookup(id)?.id === id) {
-      return "delivered";
-    }
-    return this.#reservations.has(id) ? "pending" : undefined;
-  }
-
-  // Reserve the delivery marker BEFORE inbound handling. Reservations are
-  // in-memory, so they never consume store capacity; capacity failures surface
-  // from confirm, and the caller parks the entry as a retry-safe domain state
-  // instead of unwinding the shared inbox after ingress already ran.
-  async reserve(id: string): Promise<void> {
-    if (this.#reservations.has(id) || this.#delivered.lookup(id)?.id === id) {
-      return;
-    }
-    this.#reservations.add(id);
+  async status(id: string): Promise<"delivered" | undefined> {
+    return this.#delivered.lookup(id)?.id === id ? "delivered" : undefined;
   }
 
   async confirm(id: string): Promise<void> {
@@ -542,7 +522,6 @@ export class ReefDeliveredStore {
     if (!inserted && this.#delivered.lookup(id)?.id !== id) {
       throw new Error("Failed persisting Reef delivered marker");
     }
-    this.#reservations.delete(id);
   }
 
   async add(id: string): Promise<void> {

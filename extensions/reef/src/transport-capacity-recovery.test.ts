@@ -142,8 +142,8 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
     );
 
     // Delivered namespace full: both entries park AFTER ingress as retry-safe
-    // domain states (reservations are in-memory, so capacity surfaces at
-    // confirm). The shared connection survives, later entries are still
+    // domain states when confirmation reaches capacity. The shared connection
+    // survives without retaining per-entry reservation bookkeeping, later entries are still
     // attempted, nothing is acknowledged, and the cursor is held.
     await inbox.drain();
     expect(onIngress).toHaveBeenCalledTimes(2);
