@@ -693,7 +693,7 @@ describe("Reef delivered marker two-phase delivery", () => {
       overflowPolicy: "reject-new",
       defaultTtlMs: REEF_DELIVERED_TTL_MS,
     });
-    await legacy.registerIfAbsent("legacy-1", { id: "legacy-1" });
+    legacy.registerIfAbsent("legacy-1", { id: "legacy-1" });
     await expect(stores.delivered.status("legacy-1")).resolves.toBe("delivered");
     await expect(stores.delivered.has("legacy-1")).resolves.toBe(true);
   });

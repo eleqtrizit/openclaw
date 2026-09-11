@@ -529,6 +529,8 @@ function isParkedInboundPipelineError(error: PipelineError): boolean {
 // stable error code identifies bounded-store capacity exhaustion (reject-new).
 function isPluginStateCapacityError(error: unknown): boolean {
   return (
-    error instanceof Error && (error as { code?: unknown }).code === "PLUGIN_STATE_LIMIT_EXCEEDED"
+    error instanceof Error &&
+    // SAFETY: PluginStateStoreError carries a stable string code; the class is not on the plugin-SDK import surface.
+    (error as { code?: unknown }).code === "PLUGIN_STATE_LIMIT_EXCEEDED"
   );
 }

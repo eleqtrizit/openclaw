@@ -736,7 +736,7 @@ describe("ReefMessageFlow delivery-store capacity", () => {
       config: config(),
       trust: trust({ alice: peerTrust(alice) }).store,
       keys: bob,
-      transport: relay as unknown as ReefTransportClient,
+      transport: relay as unknown as ReefTransportClient, // SAFETY: test transport mock satisfies the client contract
       guard: guard(allow),
       audit: new MemoryAuditStore(new Uint8Array(32).fill(20)),
       replay: new MemoryReplayStore(),
@@ -773,12 +773,12 @@ describe("ReefMessageFlow delivery-store capacity", () => {
           code: "PLUGIN_STATE_LIMIT_EXCEEDED",
         });
       },
-    } as unknown as ReplayStore;
+    } as unknown as ReplayStore; // SAFETY: capacity stub only implements claim
     const flow = new ReefMessageFlow({
       config: config(),
       trust: trust({ alice: peerTrust(alice) }).store,
       keys: bob,
-      transport: relay as unknown as ReefTransportClient,
+      transport: relay as unknown as ReefTransportClient, // SAFETY: test transport mock satisfies the client contract
       guard: guard(allow),
       audit: new MemoryAuditStore(new Uint8Array(32).fill(21)),
       replay: fullReplay,
@@ -814,7 +814,7 @@ describe("ReefMessageFlow delivery-store capacity", () => {
       config: config(),
       trust: trust({ alice: peerTrust(alice) }).store,
       keys: bob,
-      transport: relay as unknown as ReefTransportClient,
+      transport: relay as unknown as ReefTransportClient, // SAFETY: test transport mock satisfies the client contract
       guard: guard(allow),
       audit: new MemoryAuditStore(new Uint8Array(32).fill(22)),
       replay: new MemoryReplayStore(),
