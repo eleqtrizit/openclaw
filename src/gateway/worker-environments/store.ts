@@ -1022,7 +1022,7 @@ export function createWorkerEnvironmentStore(
     ): void {
       const result = write((db) => revokeCredential(db, required(environmentId, "id")));
       if (opts.fenceWorkspaceTransfers) {
-        for (const listener of [...credentialRevocationListeners]) {
+        for (const listener of credentialRevocationListeners) {
           listener(environmentId);
         }
       }

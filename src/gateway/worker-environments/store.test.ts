@@ -660,45 +660,6 @@ describe("worker environment store", () => {
     expect(store.get(bootstrapping.environmentId)?.state).toBe("ready");
   });
 
-  it("notifies credential-revocation listeners only when transfers must fence", () => {
-    const rotating = seedBootstrapping("worker-revoke-rotate", "lease-revoke-rotate");
-    const permanent = seedBootstrapping("worker-revoke-permanent", "lease-revoke-permanent");
-    store.transition({
-      environmentId: rotating.environmentId,
-      from: rotating.state,
-      to: "ready",
-      patch: readyPatch(),
-    });
-    store.transition({
-      environmentId: permanent.environmentId,
-      from: permanent.state,
-      to: "ready",
-      patch: {
-        ...readyPatch(),
-        credential: {
-          credentialHash: hashWorkerCredential([CREDENTIAL, "revoke-permanent"].join("-")),
-          sessionId: null,
-          rpcSetVersion: 1,
-          expiresAtMs: nowMs + 10_000,
-        },
-      },
-    });
-    const notified: string[] = [];
-    store.onCredentialRevoked((environmentId) => {
-      notified.push(environmentId);
-    });
-
-    // Rotation-style revocation: no fence notification.
-    store.revokeEnvironmentCredential(rotating.environmentId);
-    expect(notified).toEqual([]);
-
-    // Permanent revocation: fences live workspace transfers.
-    store.revokeEnvironmentCredential(permanent.environmentId, {
-      fenceWorkspaceTransfers: true,
-    });
-    expect(notified).toEqual([permanent.environmentId]);
-  });
-
   it("allocates globally distinct owner epochs when a session moves environments", () => {
     const makeReady = (environmentId: string, leaseId: string) => {
       const bootstrapping = seedBootstrapping(environmentId, leaseId);

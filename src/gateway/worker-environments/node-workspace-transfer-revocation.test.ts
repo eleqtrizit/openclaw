@@ -1,7 +1,6 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred, withTestTimeout } from "../../../test/helpers/promise.js";
@@ -461,7 +460,9 @@ describe("durable credential revocation fencing", () => {
       } as const;
       const authorization = service.authorize({ route, token });
       expect(authorization).toBeDefined();
-      if (!authorization) throw new Error("authorization missing before fence");
+      if (!authorization) {
+        throw new Error("authorization missing before fence");
+      }
       const signal = service.authorizationSignal(authorization);
       expect(signal.aborted).toBe(false);
 
@@ -493,7 +494,9 @@ describe("durable credential revocation fencing", () => {
       isAuthorized: () => true,
     });
     const entry = snapshot.manifest.entries.find((candidate) => candidate.path === "secret.txt");
-    if (!entry || entry.type !== "file") throw new Error("snapshot missing proof file");
+    if (!entry || entry.type !== "file") {
+      throw new Error("snapshot missing proof file");
+    }
     const callback = createNodeWorkspaceTransferHttpCallback(service);
     const server = createServer((req, res) => {
       void handleNodeWorkspaceTransferHttpRequest({
@@ -509,7 +512,9 @@ describe("durable credential revocation fencing", () => {
       server.listen(0, "127.0.0.1", resolve);
     });
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("HTTP fixture did not bind");
+    if (!address || typeof address === "string") {
+      throw new Error("HTTP fixture did not bind");
+    }
     const controller = new AbortController();
     try {
       const response = await fetch(
@@ -518,7 +523,9 @@ describe("durable credential revocation fencing", () => {
       );
       expect(response.status).toBe(200);
       const reader = response.body?.getReader();
-      if (!reader) throw new Error("blob response has no body");
+      if (!reader) {
+        throw new Error("blob response has no body");
+      }
       let bytes = 0;
       // Confirm the stream is live, then fence while most of the body is unconsumed.
       const first = await reader.read();
@@ -646,7 +653,9 @@ describe("durable credential revocation fencing through the real store", () => {
       isAuthorized: () => true,
     });
     const entry = snapshot.manifest.entries.find((candidate) => candidate.path === "secret.txt");
-    if (!entry || entry.type !== "file") throw new Error("snapshot missing proof file");
+    if (!entry || entry.type !== "file") {
+      throw new Error("snapshot missing proof file");
+    }
     const route = {
       kind: "blob",
       direction: "download",
@@ -671,7 +680,9 @@ describe("durable credential revocation fencing through the real store", () => {
       server.listen(0, "127.0.0.1", resolve);
     });
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("HTTP fixture did not bind");
+    if (!address || typeof address === "string") {
+      throw new Error("HTTP fixture did not bind");
+    }
     const controller = new AbortController();
     try {
       const response = await fetch(
@@ -680,7 +691,9 @@ describe("durable credential revocation fencing through the real store", () => {
       );
       expect(response.status).toBe(200);
       const reader = response.body?.getReader();
-      if (!reader) throw new Error("blob response has no body");
+      if (!reader) {
+        throw new Error("blob response has no body");
+      }
       let bytes = 0;
       const first = await reader.read();
       bytes += first.value?.byteLength ?? 0;
