@@ -44,6 +44,7 @@ export function flowStores(deliveredMaxEntries?: number) {
       env: { OPENCLAW_STATE_DIR: stateDir },
     });
   return {
+    runtime,
     reviews: new ReviewApprovalStore(runtime),
     delivered:
       deliveredMaxEntries === undefined
