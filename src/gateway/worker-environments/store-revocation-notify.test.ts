@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { WorkerSshEndpoint } from "../../plugins/types.js";
 import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
@@ -9,7 +10,7 @@ import {
 import { hashWorkerCredential } from "./credential.js";
 import { createWorkerEnvironmentStore, type WorkerEnvironmentStore } from "./store.js";
 
-const SSH_ENDPOINT = {
+const SSH_ENDPOINT: WorkerSshEndpoint = {
   host: "worker.example.test",
   port: 2222,
   fallbackPorts: [22],
