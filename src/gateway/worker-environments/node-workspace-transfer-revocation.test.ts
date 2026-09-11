@@ -415,3 +415,134 @@ describe("attachment transfer revocation", () => {
     }
   });
 });
+
+describe("durable credential revocation fencing", () => {
+  const makeService = (root: string) =>
+    createNodeWorkspaceTransferService({
+      temporaryRoot: path.join(root, "transfers"),
+      getOwner: () => ({
+        credential: { ownerEpoch: 1, sessionId: "session" },
+        environment: {
+          ownerEpoch: 1,
+          attachedSessionIds: ["session"],
+          destroyRequestedAtMs: null,
+          state: "attached",
+        },
+      }),
+    });
+
+  it("fenceEnvironment aborts capability signals and denies new admissions", async () => {
+    const root = tempDirs.make("workspace-transfer-fence-");
+    const localPath = path.join(root, "source");
+    await fs.mkdir(localPath);
+    const service = makeService(root);
+    await service.initialize();
+    try {
+      const { snapshot, token } = await service.prepareSync({
+        environmentId: "environment",
+        ownerEpoch: 1,
+        sessionId: "session",
+        generation: 1,
+        localPath,
+        isAuthorized: () => true,
+      });
+      const route = {
+        kind: "manifest",
+        direction: "download",
+        environmentId: "environment",
+        manifestRef: snapshot.manifestRef,
+      } as const;
+      const authorization = service.authorize({ route, token });
+      expect(authorization).toBeDefined();
+      if (!authorization) throw new Error("authorization missing before fence");
+      const signal = service.authorizationSignal(authorization);
+      expect(signal.aborted).toBe(false);
+
+      service.fenceEnvironment("environment");
+
+      expect(signal.aborted).toBe(true);
+      expect(service.isAuthorizationCurrent(authorization)).toBe(false);
+      expect(service.authorize({ route, token })).toBeUndefined();
+    } finally {
+      await service.closeAll().catch(() => undefined);
+    }
+  });
+
+  it("a fencing revocation stops an in-flight blob response", async () => {
+    const root = tempDirs.make("workspace-transfer-revoke-blob-");
+    const localPath = path.join(root, "source");
+    await fs.mkdir(localPath);
+    // Large enough that the HTTP client cannot buffer the whole body before the fence.
+    const payload = Buffer.alloc(8 * 1024 * 1024, 0x53);
+    await fs.writeFile(path.join(localPath, "secret.txt"), payload);
+    const service = makeService(root);
+    await service.initialize();
+    const { snapshot, token } = await service.prepareSync({
+      environmentId: "environment",
+      ownerEpoch: 1,
+      sessionId: "session",
+      generation: 1,
+      localPath,
+      isAuthorized: () => true,
+    });
+    const entry = snapshot.manifest.entries.find((candidate) => candidate.path === "secret.txt");
+    if (!entry || entry.type !== "file") throw new Error("snapshot missing proof file");
+    const callback = createNodeWorkspaceTransferHttpCallback(service);
+    const server = createServer((req, res) => {
+      void handleNodeWorkspaceTransferHttpRequest({
+        req,
+        res,
+        clientIp: "127.0.0.1",
+        callback,
+      }).catch((error: unknown) =>
+        res.destroy(error instanceof Error ? error : new Error(String(error))),
+      );
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("HTTP fixture did not bind");
+    const controller = new AbortController();
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/__openclaw__/worker-transfer/v1/environments/environment/blobs/${entry.sha256}`,
+        { headers: { authorization: `Bearer ${token}` }, signal: controller.signal },
+      );
+      expect(response.status).toBe(200);
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("blob response has no body");
+      let bytes = 0;
+      // Confirm the stream is live, then fence while most of the body is unconsumed.
+      const first = await reader.read();
+      bytes += first.value?.byteLength ?? 0;
+      service.fenceEnvironment("environment");
+      const drained = (async () => {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            return;
+          }
+          bytes += value.byteLength;
+        }
+      })();
+      await Promise.allSettled([drained]);
+      // The aborted response must not have delivered the whole workspace blob.
+      expect(bytes).toBeLessThan(payload.byteLength);
+      const route = {
+        kind: "blob",
+        direction: "download",
+        environmentId: "environment",
+        sha256: entry.sha256,
+      } as const;
+      expect(service.authorize({ route, token })).toBeUndefined();
+    } finally {
+      controller.abort();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      await service.closeAll().catch(() => undefined);
+    }
+  });
+});
