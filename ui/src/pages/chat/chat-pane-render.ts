@@ -33,7 +33,7 @@ import { mutateChatGoal, submitChatGoalDraft } from "./chat-goals.ts";
 import { clearChatHistory } from "./chat-history-actions.ts";
 import { getChatHistoryLoadState } from "./chat-history-state.ts";
 import { resolveChatMessageAccess } from "./chat-message-access.ts";
-import { requiresChatModelSetup } from "./chat-model-setup.ts";
+import { openModelAccess, requiresChatModelSetup } from "./chat-model-setup.ts";
 import { ChatPaneLayoutRender } from "./chat-pane-layout-render.ts";
 import { createChatPaneRails } from "./chat-pane-rails.ts";
 import {
@@ -259,12 +259,13 @@ export class ChatPane extends ChatPaneLayoutRender {
           state,
           selectedSession,
           agentDefaultModel,
+          selectedAgent,
           agentDefaultPermissionMode: selectedAgent?.defaultPermissionMode,
           modelAccess: mutationAccess.model,
           effortAccess: mutationAccess.effort,
           permissionAccess: mutationAccess.permission,
           canSelectFull: hasOperatorAdminAccess(gatewaySnapshot.hello?.auth ?? null),
-          onModelSetup: () => this.context.navigate("model-setup"),
+          onModelSetup: (entry) => openModelAccess(this.context, entry),
           onModelAccounts: () => this.context.navigate("profile"),
         });
     const composerState = getChatComposerState(this.presentationId);
@@ -554,8 +555,7 @@ export class ChatPane extends ChatPaneLayoutRender {
       },
       onChatScroll: (event) => this.handleTranscriptScroll(event),
       onHistoryIntent: (event) => this.handleTranscriptHistoryIntent(event),
-      // Lazy SVG sizing can resize a committed row; re-enter the scroll owner
-      // so an active follow lock stays pinned to the latest message.
+      // Re-enter after lazy SVG sizing so active follow stays pinned to the latest message.
       onAssistantAttachmentLoaded: () => scheduleChatScroll(state),
       getDraft: () => state.chatMessage,
       onDraftChange: state.handleChatDraftChange,
@@ -592,7 +592,6 @@ export class ChatPane extends ChatPaneLayoutRender {
                   followUpModeOverride ? { followUpMode: followUpModeOverride } : undefined,
                   submissionAction,
                 ),
-      // Checkpoint deep-link carries the archived filter so the row stays findable.
       onOpenSessionCheckpoints: () => {
         const status = selectedSessionArchived ? "&status=archived" : "";
         this.context.navigate("sessions", {

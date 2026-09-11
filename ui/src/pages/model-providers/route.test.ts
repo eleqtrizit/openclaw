@@ -117,6 +117,30 @@ describe("Models route admission", () => {
     vi.restoreAllMocks();
   });
 
+  it("preserves selected-agent ownership and provider focus from picker navigation", async () => {
+    const harness = createModelsRouter("research");
+    const location = { pathname: "/settings/models", search: "", hash: "" };
+
+    await harness.router.navigate(
+      "model-providers",
+      harness.context,
+      {},
+      { ...location, search: "?provider=inference&credential=api-key" },
+    );
+
+    expect(harness.router.getState().matches[0]?.data).toMatchObject({
+      agentId: "research",
+      focusProvider: "inference",
+      focusCredential: "api-key",
+    });
+    expect(harness.modelCalls()).toEqual(
+      expect.arrayContaining([
+        ["models.authStatus", { agentId: "research" }, expect.anything()],
+        ["models.list", { agentId: "research", view: "configured" }, expect.anything()],
+      ]),
+    );
+  });
+
   it.each(["navigation", "disconnect", "hello", "client", "set"] as const)(
     "does not dispatch after %s during the deferred import; a new load succeeds",
     async (change) => {

@@ -1,4 +1,4 @@
-import { definePage, type RouteLoaderOptions } from "@openclaw/uirouter";
+import { definePage, type RouteLoaderOptions, type RouteLocation } from "@openclaw/uirouter";
 import { html } from "lit";
 import { routePageSpec } from "../../app-route-paths.ts";
 import type { ApplicationContext } from "../../app/context.ts";
@@ -15,6 +15,10 @@ export type ModelProvidersRouteData = {
   client: ApplicationContext["gateway"]["snapshot"]["client"];
   /** Concrete agent whose credential store populated the auth snapshot. */
   agentId: string | null;
+  /** Provider targeted by a model-picker access action. */
+  focusProvider?: string | null;
+  /** Credential family behind the targeted access action. */
+  focusCredential?: "api-key" | "oauth" | "token" | "subscription" | null;
 };
 
 async function loadModelProvidersRouteData(
@@ -23,6 +27,16 @@ async function loadModelProvidersRouteData(
 ): Promise<ModelProvidersRouteData> {
   const gateway = context.gateway;
   const gatewaySnapshot = gateway.snapshot;
+  const search = new URLSearchParams(options.location.search);
+  const focusProvider = search.get("provider");
+  const rawFocusCredential = search.get("credential");
+  const focusCredential =
+    rawFocusCredential === "api-key" ||
+    rawFocusCredential === "oauth" ||
+    rawFocusCredential === "token" ||
+    rawFocusCredential === "subscription"
+      ? rawFocusCredential
+      : null;
   let agentId = context.agentSelection.state.selectedId;
   const { EMPTY_MODEL_PROVIDERS_DATA, loadModelProvidersData } = await import("./load.ts");
   const client = gatewaySnapshot.phase === "connected" ? gatewaySnapshot.client : null;
@@ -39,7 +53,15 @@ async function loadModelProvidersRouteData(
     );
   };
   if (!client || !isCurrent()) {
-    return { gateway, gatewaySnapshot, data: EMPTY_MODEL_PROVIDERS_DATA, client: null, agentId };
+    return {
+      gateway,
+      gatewaySnapshot,
+      data: EMPTY_MODEL_PROVIDERS_DATA,
+      client: null,
+      agentId,
+      focusProvider,
+      focusCredential,
+    };
   }
   if (!agentId) {
     const roster = await context.agents.ensureList();
@@ -47,7 +69,15 @@ async function loadModelProvidersRouteData(
     agentId = roster ? normalizeAgentId(roster.defaultId) : null;
   }
   if (!agentId || !isCurrent()) {
-    return { gateway, gatewaySnapshot, data: EMPTY_MODEL_PROVIDERS_DATA, client: null, agentId };
+    return {
+      gateway,
+      gatewaySnapshot,
+      data: EMPTY_MODEL_PROVIDERS_DATA,
+      client: null,
+      agentId,
+      focusProvider,
+      focusCredential,
+    };
   }
   return {
     gateway,
@@ -55,11 +85,14 @@ async function loadModelProvidersRouteData(
     data: await loadModelProvidersData(client, { agentId, signal: options.signal }),
     client,
     agentId,
+    focusProvider,
+    focusCredential,
   };
 }
 
 export const page = definePage({
   ...routePageSpec("model-providers"),
+  loaderDeps: (_context: ApplicationContext, location: RouteLocation) => location.search,
   loader: loadModelProvidersRouteData,
   component: () =>
     import("./model-providers-page.ts").then(() => ({

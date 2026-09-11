@@ -66,6 +66,7 @@ function resolveFastModeState(params: {
 describe("chat-model-select-state", () => {
   it.each([
     { reason: "missing-auth", expected: "missing-auth" },
+    { reason: "missing-agent-auth", expected: "missing-agent-auth" },
     { reason: "auth-failed", expected: "auth-failed" },
     { reason: "cooldown", expected: "cooldown" },
     { reason: undefined, expected: undefined },

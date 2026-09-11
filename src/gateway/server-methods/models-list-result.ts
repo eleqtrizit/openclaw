@@ -76,6 +76,39 @@ type PreparedModelsListResult = {
   isCurrent: () => boolean;
 };
 
+type ModelCredentialType = NonNullable<ModelChoice["credentialType"]>;
+
+function resolveConfiguredProviderCredentialType(params: {
+  configuredProviders: ReadonlyMap<string, string | null>;
+  entry: ModelCatalogEntry;
+  evaluation: ModelAuthAvailabilityEvaluation;
+}): { configured: boolean; credentialType?: ModelCredentialType } {
+  const configuredMode = params.configuredProviders.get(normalizeProviderId(params.entry.provider));
+  if (configuredMode === undefined) {
+    return { configured: false };
+  }
+  if (configuredMode === "oauth" || configuredMode === "token") {
+    return { configured: true, credentialType: configuredMode };
+  }
+  if (configuredMode === "api-key") {
+    return { configured: true, credentialType: "api-key" };
+  }
+  if (configuredMode === "aws-sdk") {
+    return { configured: true };
+  }
+  const requirements = new Set<"api-key" | "subscription">();
+  const routeResolution = params.evaluation.routeResolution;
+  if (routeResolution?.kind === "routes") {
+    for (const route of routeResolution.routes) {
+      requirements.add(route.authRequirement);
+    }
+  }
+  const selectedRequirement = params.evaluation.selectedRoute?.authRequirement;
+  const requirement: ModelCredentialType | undefined =
+    selectedRequirement ?? (requirements.size === 1 ? [...requirements][0] : undefined);
+  return { configured: true, ...(requirement ? { credentialType: requirement } : {}) };
+}
+
 function resolveModelsListView(params: Record<string, unknown>): ModelCatalogBrowseView {
   const view = params.view;
   return view === "configured" || view === "provider-config" || view === "all" ? view : "default";
@@ -123,10 +156,21 @@ function createPublicModelsListProjector(params: {
 }) {
   // Route rows retain identity across reads; keep display/thinking work outside the hot overlay.
   const prepared = new WeakMap<ModelCatalogEntry, ModelsListEntryWithCapabilities>();
+  const configuredProviders = new Map(
+    Object.entries(params.cfg.models?.providers ?? {}).map(([provider, config]) => [
+      normalizeProviderId(provider),
+      config?.auth ?? null,
+    ]),
+  );
   return (
     entry: ModelCatalogEntry,
     evaluation: ModelAuthAvailabilityEvaluation,
   ): ModelsListEntryWithCapabilities => {
+    const credential = resolveConfiguredProviderCredentialType({
+      configuredProviders,
+      entry,
+      evaluation,
+    });
     let preparedEntry = prepared.get(entry);
     if (!preparedEntry) {
       const configuredEntry = params.configuredEntriesByKey.get(modelKey(entry.provider, entry.id));
@@ -193,7 +237,13 @@ function createPublicModelsListProjector(params: {
       projectedAvailability === undefined ? {} : { available: projectedAvailability },
       projectedAvailability === false && evaluation.unavailableReason
         ? {
-            unavailableReason: evaluation.unavailableReason,
+            unavailableReason:
+              evaluation.unavailableReason === "missing-auth" &&
+              credential.configured &&
+              (credential.credentialType === "api-key" || credential.credentialType === "token")
+                ? "missing-agent-auth"
+                : evaluation.unavailableReason,
+            ...(credential.credentialType ? { credentialType: credential.credentialType } : {}),
             ...(evaluation.unavailableUntil !== undefined
               ? { unavailableUntil: evaluation.unavailableUntil }
               : {}),

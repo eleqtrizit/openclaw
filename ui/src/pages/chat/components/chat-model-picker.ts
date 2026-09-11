@@ -39,6 +39,7 @@ export type { ChatModelCatalogState } from "./chat-model-catalog-state.ts";
 
 type ChatModelPickerParams = {
   accountControl?: unknown;
+  agentLabel?: string;
   contextWindow?: ChatContextWindowControlParams;
   defaultModelLabel: string;
   disabled: boolean;
@@ -57,7 +58,7 @@ type ChatModelPickerParams = {
   triggerModelValue?: string;
   triggerStatusLabel?: string;
   triggerLoading?: boolean;
-  onModelSetup?: () => void;
+  onModelSetup?: (entry?: ChatModelPickerOption) => void;
   onOpen?: () => unknown;
   onOpenChange?: (open: boolean) => void;
   onModelSelect: (value: string, sessionKey: string) => Promise<unknown>;
@@ -370,6 +371,7 @@ export function renderChatModelPicker(params: ChatModelPickerParams) {
                                           onHighlight: highlightOption,
                                           onSelect: selectModel,
                                           onModelSetup: params.onModelSetup,
+                                          agentLabel: params.agentLabel,
                                         }),
                                     )}
                                   </div>

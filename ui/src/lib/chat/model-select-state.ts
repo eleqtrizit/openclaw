@@ -203,14 +203,20 @@ export function resolveChatModelUnavailableReason(
   if (matches.some((entry) => entry.unavailableReason === "cooldown")) {
     return "cooldown";
   }
-  return matches.some((entry) => entry.unavailableReason === "auth-failed")
-    ? "auth-failed"
+  if (matches.some((entry) => entry.unavailableReason === "auth-failed")) {
+    return "auth-failed";
+  }
+  return matches.some((entry) => entry.unavailableReason === "missing-agent-auth")
+    ? "missing-agent-auth"
     : "missing-auth";
 }
 
 export function chatModelUnavailableMessage(
   reason: ModelCatalogEntry["unavailableReason"],
 ): string | undefined {
+  if (reason === "missing-agent-auth") {
+    return t("modelSetup.missingAgentAuth");
+  }
   if (reason === "missing-auth") {
     return t("modelSetup.missingAuth");
   }

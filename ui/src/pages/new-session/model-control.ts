@@ -11,6 +11,7 @@ import type {
 import type { ApplicationContext } from "../../app/context.ts";
 import { hasOperatorWriteAccess } from "../../app/operator-access.ts";
 import { t } from "../../i18n/index.ts";
+import { normalizeAgentLabel } from "../../lib/agents/display.ts";
 import { buildQualifiedChatModelValue } from "../../lib/chat/model-ref.ts";
 import {
   isChatFastModeProviderSupported,
@@ -603,6 +604,7 @@ export class NewSessionModelControl {
           hint: t("chat.modelAccounts.draftHint"),
         }),
       activeRunId: null,
+      agentLabel: options.agent ? normalizeAgentLabel(options.agent) : options.agentId,
       agentDefaultModel,
       connected: snapshot?.phase === "connected",
       gatewayAvailable: Boolean(snapshot?.client),
@@ -703,7 +705,12 @@ export class NewSessionModelControl {
         this.contextWindow = value;
         this.notify();
       },
-      onModelSetup: () => options.context?.navigate("model-setup"),
+      onModelSetup: (entry) =>
+        entry?.unavailableReason === "missing-agent-auth"
+          ? options.context?.navigate("model-providers", {
+              search: `?provider=${encodeURIComponent(entry.provider)}&credential=${encodeURIComponent(entry.credentialType ?? "")}`,
+            })
+          : options.context?.navigate("model-setup"),
       onModelPickerOpen: () => this.retryPickerCatalogs(),
       onRequestUpdate: this.notify,
     });

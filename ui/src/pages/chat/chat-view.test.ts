@@ -7210,6 +7210,43 @@ describe("chat model controls", () => {
     expect(onModelSetup).toHaveBeenCalledOnce();
   });
 
+  it("shows agent-aware API-key guidance for a configured custom provider", () => {
+    const { state } = createChatHeaderState({
+      model: "reasoner",
+      modelProvider: "inference",
+      models: [
+        {
+          id: "reasoner",
+          name: "Reasoner",
+          provider: "inference",
+          available: false,
+          unavailableReason: "missing-agent-auth",
+          credentialType: "api-key",
+        },
+      ],
+    });
+    const onModelSetup = vi.fn();
+    const container = renderModelControls(state, {
+      agentDefaultModel: "inference/reasoner",
+      agentLabel: "Pinchita",
+      onModelSetup,
+    });
+    const option = container.querySelector<HTMLButtonElement>("[data-chat-model-option]");
+    const warning = option?.querySelector("[data-chat-model-auth-warning]");
+    // SAFETY: openclaw-tooltip exposes its rendered content through this public property.
+    const tooltip = warning?.closest<HTMLElement>("openclaw-tooltip") as
+      | (HTMLElement & { content?: string })
+      | null;
+
+    expect(warning?.textContent?.trim()).toBe("Access not configured for Pinchita");
+    expect(option?.getAttribute("aria-label")).toContain("Access not configured for Pinchita");
+    expect(tooltip?.content).toContain("Pinchita has no API key for Inference");
+    option?.click();
+    expect(onModelSetup).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "inference", unavailableReason: "missing-agent-auth" }),
+    );
+  });
+
   it("keeps each alias's auth action tied to its own availability reason", () => {
     const { state } = createChatHeaderState({
       model: "gpt-5.6-luna",

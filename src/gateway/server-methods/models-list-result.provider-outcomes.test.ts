@@ -293,6 +293,32 @@ describe("models.list provider catalog outcomes", () => {
       expected: { available: false, unavailableReason: "missing-auth" },
     },
     {
+      name: "configured custom API-key provider missing this agent's credential",
+      configProviderAuth: "api-key",
+      evaluation: { availability: undefined, unavailableReason: "missing-auth" },
+      expected: {
+        available: false,
+        unavailableReason: "missing-agent-auth",
+        credentialType: "api-key",
+      },
+    },
+    {
+      name: "configured OAuth provider requiring sign-in",
+      configProviderAuth: "oauth",
+      evaluation: { availability: undefined, unavailableReason: "missing-auth" },
+      expected: {
+        available: false,
+        unavailableReason: "missing-auth",
+        credentialType: "oauth",
+      },
+    },
+    {
+      name: "configured AWS SDK provider without a UI credential flow",
+      configProviderAuth: "aws-sdk",
+      evaluation: { availability: undefined, unavailableReason: "missing-auth" },
+      expected: { available: false, unavailableReason: "missing-auth" },
+    },
+    {
       name: "cooldown with its retry time",
       evaluation: {
         availability: false,
@@ -319,9 +345,18 @@ describe("models.list provider catalog outcomes", () => {
       },
       expected: { available: true },
     },
-  ] as const)("projects $name", async ({ evaluation, expected }) => {
+  ] as const)("projects $name", async ({ evaluation, expected, ...scenario }) => {
     const config = {
       agents: { defaults: { models: { "custom/test-model": {} } } },
+      ...(scenario.configProviderAuth
+        ? {
+            models: {
+              providers: {
+                custom: { auth: scenario.configProviderAuth },
+              },
+            },
+          }
+        : {}),
     } as OpenClawConfig;
     const model = { id: "test-model", name: "Test Model", provider: "custom" };
     const snapshot = markPreparedModelCatalogFull({ entries: [model], routeVariants: [model] });

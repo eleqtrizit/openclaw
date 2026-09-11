@@ -1,7 +1,8 @@
 import { html } from "lit";
-import type { GatewaySessionRow } from "../../api/types.ts";
+import type { GatewayAgentRow, GatewaySessionRow } from "../../api/types.ts";
 import type { ApplicationGatewaySnapshot } from "../../app/gateway.ts";
 import { t } from "../../i18n/index.ts";
+import { normalizeAgentLabel } from "../../lib/agents/display.ts";
 import {
   readSessionMethodAccess,
   type SessionMethodAccess,
@@ -24,6 +25,7 @@ import {
   renderChatModelControls,
   type ChatModelCatalogState,
 } from "./components/chat-model-controls.ts";
+import type { ChatModelPickerOption } from "./components/chat-model-picker-options.ts";
 import type { ChatPermissionPickerProps } from "./components/chat-permission-picker.ts";
 
 type SessionActionAccess = ReturnType<typeof readChatSessionActionAccess>;
@@ -92,12 +94,13 @@ export function renderChatPaneComposerControls(params: {
   state: ChatPageHost;
   selectedSession: GatewaySessionRow | undefined;
   agentDefaultModel: string | undefined;
+  selectedAgent?: GatewayAgentRow;
   agentDefaultPermissionMode?: ChatPermissionPickerProps["defaultMode"];
   modelAccess: SessionMethodAccess;
   effortAccess: SessionMethodAccess;
   permissionAccess: SessionMethodAccess;
   canSelectFull: boolean;
-  onModelSetup: () => void;
+  onModelSetup: (entry?: ChatModelPickerOption) => void;
   onModelAccounts?: () => void;
 }): {
   composerControls: NonNullable<ChatProps["composerControls"]>;
@@ -107,6 +110,7 @@ export function renderChatPaneComposerControls(params: {
     state,
     selectedSession,
     agentDefaultModel,
+    selectedAgent,
     agentDefaultPermissionMode,
     modelAccess,
     effortAccess,
@@ -189,6 +193,7 @@ export function renderChatPaneComposerControls(params: {
             }),
           activeRunId: state.chatRunId,
           agentDefaultModel,
+          agentLabel: selectedAgent ? normalizeAgentLabel(selectedAgent) : undefined,
           connected: state.connected,
           gatewayAvailable: Boolean(state.client),
           loading: state.chatLoading,

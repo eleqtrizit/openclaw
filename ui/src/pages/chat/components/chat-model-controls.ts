@@ -32,6 +32,7 @@ type ChatContextWindowTarget = Pick<
 type ChatModelControlsProps = {
   renderAccountControl?: (model: string) => unknown;
   activeRunId: string | null;
+  agentLabel?: string;
   agentDefaultModel?: string;
   connected: boolean;
   gatewayAvailable: boolean;
@@ -58,7 +59,7 @@ type ChatModelControlsProps = {
   thinkingSession?: ChatThinkingTarget;
   onFastModeSelect?: (value: ChatFastModeSelectValue, sessionKey: string) => unknown;
   onContextWindowSelect?: (value: string, sessionKey: string) => unknown;
-  onModelSetup?: () => void;
+  onModelSetup?: (entry?: ChatModelPickerOption) => void;
   onModelPickerOpen?: () => unknown;
   onModelPickerOpenChange?: (open: boolean) => void;
   onModelSelect?: (value: string, sessionKey: string) => unknown;
@@ -281,6 +282,9 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
             : "",
       ),
     };
+    if (catalogEntry?.credentialType) {
+      pickerOption.credentialType = catalogEntry.credentialType;
+    }
     if (agentRuntimeId) {
       pickerOption.agentRuntimeId = agentRuntimeId;
     }
@@ -311,7 +315,13 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
         ? { supportsTools: currentCatalogEntry.supportsTools }
         : {}),
       ...(currentCatalogEntry?.available === false
-        ? { disabled: true, unavailableReason: currentCatalogEntry.unavailableReason }
+        ? {
+            disabled: true,
+            unavailableReason: currentCatalogEntry.unavailableReason,
+            ...(currentCatalogEntry.credentialType
+              ? { credentialType: currentCatalogEntry.credentialType }
+              : {}),
+          }
         : {}),
       isDefault: false,
       value: currentOverride,
@@ -422,6 +432,7 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
     <div class="chat-controls__session chat-controls__model chat-controls__model-settings">
       ${renderChatModelPicker({
         accountControl: props.renderAccountControl?.(currentOverride || defaultModel),
+        agentLabel: props.agentLabel,
         contextWindow:
           contextWindows.length > 1
             ? {

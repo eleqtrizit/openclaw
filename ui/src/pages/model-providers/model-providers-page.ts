@@ -48,6 +48,7 @@ import {
   type ModelProvidersData,
 } from "./load.ts";
 import { ModelProviderLoginController } from "./login-controller.ts";
+import { applyProviderFocus } from "./model-providers-focus.ts";
 import { ModelProviderProfileActionsController } from "./profile-actions-controller.ts";
 import { showProfileActionError, showProfileLogoutSuccess } from "./profiles-view.ts";
 import { updateRecordEntry } from "./record-state.ts";
@@ -223,6 +224,7 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
       this.catalogDiscovery.reset();
       this.routeDataObserved = true;
       this.setSelectedAgent(this.resolveSelectedAgentId());
+      applyProviderFocus(this, this.routeData, (provider) => this.openKeyEditor(provider));
       if (
         (this.routeData.agentId ?? "") === this.selectedAgentId &&
         this.gateway.isRouteDataCurrent(this.routeData)

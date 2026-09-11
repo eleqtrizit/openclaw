@@ -571,6 +571,32 @@ describe("buildModelProviderCards", () => {
     expect(cards.map((card) => card.id)).toEqual(["anthropic", "openai"]);
   });
 
+  it("keeps a globally configured custom provider visible without setup-catalog metadata", () => {
+    const cards = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      configProviderIds: ["bighank"],
+      authStatus: authStatus([], []),
+      models: [
+        catalogEntry({
+          provider: "bighank",
+          id: "reasoner",
+          unavailableReason: "missing-agent-auth",
+          credentialType: "api-key",
+        }),
+      ],
+    });
+
+    expect(cards).toEqual([
+      expect.objectContaining({
+        id: "bighank",
+        configKey: "bighank",
+        modelCount: 1,
+        availableModelCount: 0,
+        profiles: [],
+      }),
+    ]);
+  });
+
   it("keeps API key provenance and config-only providers", () => {
     const cards = buildModelProviderCards({
       ...EMPTY_INPUT,

@@ -293,8 +293,16 @@ describe("Models auth params schemas", () => {
 describe("ModelsListResultSchema", () => {
   it("accepts closed unavailability reasons and epoch-millisecond retry times", () => {
     const model = { id: "test-model", name: "Test Model", provider: "custom", available: false };
-    for (const unavailableReason of ["missing-auth", "auth-failed", "cooldown"]) {
+    for (const unavailableReason of [
+      "missing-auth",
+      "missing-agent-auth",
+      "auth-failed",
+      "cooldown",
+    ]) {
       expectAccepted(ModelsListResultSchema, { models: [{ ...model, unavailableReason }] });
+    }
+    for (const credentialType of ["api-key", "oauth", "token", "subscription"]) {
+      expectAccepted(ModelsListResultSchema, { models: [{ ...model, credentialType }] });
     }
     expectAccepted(ModelsListResultSchema, {
       models: [{ ...model, unavailableReason: "cooldown", unavailableUntil: 2_000_000_000_000 }],

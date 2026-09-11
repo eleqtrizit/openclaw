@@ -15,6 +15,7 @@ export type ChatModelPickerOption = {
   commitValue: string;
   contextTokens?: number;
   contextWindow?: number;
+  credentialType?: ModelCatalogEntry["credentialType"];
   disabled?: boolean;
   unavailableReason?: ModelCatalogEntry["unavailableReason"];
   isDefault: boolean;
@@ -92,15 +93,19 @@ export function renderChatModelPickerOption(params: {
   selectedModelValue: string;
   onHighlight: (row: HTMLButtonElement) => void;
   onSelect: (entry: ChatModelPickerOption, event: MouseEvent) => void;
-  onModelSetup?: () => void;
+  onModelSetup?: (entry?: ChatModelPickerOption) => void;
+  agentLabel?: string;
 }) {
   const selected =
     params.entry.value === params.selectedModelValue ||
     (params.entry.isDefault && params.selectedModelValue === "");
   const modelLabel = formatModelLabel(params.entry);
+  const needsAgentAccess =
+    params.entry.disabled && params.entry.unavailableReason === "missing-agent-auth";
   const needsAuth =
     params.entry.disabled &&
-    (params.entry.unavailableReason === "missing-auth" ||
+    (needsAgentAccess ||
+      params.entry.unavailableReason === "missing-auth" ||
       params.entry.unavailableReason === "auth-failed");
   const onModelSetup = needsAuth ? params.onModelSetup : undefined;
   const modelMeta = needsAuth
@@ -111,7 +116,22 @@ export function renderChatModelPickerOption(params: {
       ]
         .filter(Boolean)
         .join(" · ");
-  const accessibleStatus = needsAuth ? t("modelSetup.candidates.signInNeeded") : "";
+  const agentLabel = params.agentLabel?.trim() || t("modelSetup.candidates.thisAgent");
+  const accessibleStatus = needsAgentAccess
+    ? t("modelSetup.candidates.agentAccessNeeded", { agent: agentLabel })
+    : needsAuth
+      ? t("modelSetup.candidates.signInNeeded")
+      : "";
+  const accessDetail = needsAgentAccess
+    ? t(
+        params.entry.credentialType === "api-key"
+          ? "modelSetup.candidates.agentAccessDetailApiKey"
+          : params.entry.credentialType === "token"
+            ? "modelSetup.candidates.agentAccessDetailToken"
+            : "modelSetup.candidates.agentAccessDetail",
+        { agent: agentLabel, provider: providerDisplayLabel(params.entry.provider) },
+      )
+    : "";
   const option = html`<button
     class="chat-controls__inline-select-option chat-controls__model-option ${
       selected ? "chat-controls__inline-select-option--selected" : ""
@@ -145,7 +165,7 @@ export function renderChatModelPickerOption(params: {
       // Setup instead of silently ignoring the click on a disabled button.
       if (params.entry.disabled) {
         event.stopPropagation();
-        onModelSetup?.();
+        onModelSetup?.(params.entry);
         return;
       }
       params.onSelect(params.entry, event);
@@ -171,14 +191,20 @@ export function renderChatModelPickerOption(params: {
             : nothing
         }
         ${
-          needsAuth
-            ? html`<span
-                class="chat-controls__model-option-auth-warning"
-                data-chat-model-auth-warning
-              >
-                ${icons.alertTriangle}<span>${accessibleStatus}</span>
-              </span>`
-            : nothing
+          needsAgentAccess
+            ? html`<openclaw-tooltip .content=${accessDetail}>
+                <span class="chat-controls__model-option-auth-warning" data-chat-model-auth-warning>
+                  ${icons.alertTriangle}<span>${accessibleStatus}</span>
+                </span>
+              </openclaw-tooltip>`
+            : needsAuth
+              ? html`<span
+                  class="chat-controls__model-option-auth-warning"
+                  data-chat-model-auth-warning
+                >
+                  ${icons.alertTriangle}<span>${accessibleStatus}</span>
+                </span>`
+              : nothing
         }
         ${
           params.entry.supportsTools === false

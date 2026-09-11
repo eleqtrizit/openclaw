@@ -2487,6 +2487,8 @@ export const en: TranslationMap & {
   },
   modelSetup: {
     missingAuth: "No provider credential is configured for this model. Set it up in Model Setup.",
+    missingAgentAuth:
+      "This agent does not have access to this Gateway-configured model. Open Models to configure access.",
     heading: "Connect a verified AI model",
     intro:
       "OpenClaw discovers AI access on this Gateway. Choose a provider to begin; nothing is selected, tested, installed, or saved automatically.",
@@ -2525,6 +2527,14 @@ export const en: TranslationMap & {
       recommended: "Recommended",
       credentialsReady: "Credentials ready",
       signInNeeded: "Sign-in needed",
+      thisAgent: "this agent",
+      agentAccessNeeded: "Access not configured for {agent}",
+      agentAccessDetailApiKey:
+        "This model is configured on the Gateway, but {agent} has no API key for {provider}. Open Models to add one for this agent.",
+      agentAccessDetailToken:
+        "This model is configured on the Gateway, but {agent} has no access token for {provider}. Open Models to add one for this agent.",
+      agentAccessDetail:
+        "This model is configured on the Gateway, but {agent} has no credentials for {provider}. Open Models to configure access for this agent.",
       detected: "Detected",
       testAndUse: "Test & use",
       retry: "Retry test",

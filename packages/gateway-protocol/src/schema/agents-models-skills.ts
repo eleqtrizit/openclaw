@@ -66,8 +66,18 @@ export const ModelChoiceSchema = closedObject({
   unavailableReason: Type.Optional(
     Type.Union([
       Type.Literal("missing-auth"),
+      Type.Literal("missing-agent-auth"),
       Type.Literal("auth-failed"),
       Type.Literal("cooldown"),
+    ]),
+  ),
+  /** Credential family required by the selected provider route, when known. */
+  credentialType: Type.Optional(
+    Type.Union([
+      Type.Literal("api-key"),
+      Type.Literal("oauth"),
+      Type.Literal("token"),
+      Type.Literal("subscription"),
     ]),
   ),
   /** Earliest known retry time in epoch milliseconds, only for unavailable models. */
