@@ -100,15 +100,15 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
     resetFlowStoresForTests();
   });
 
-  it("survives capacity parks from two peers, keeps later entries attemptable, and completes both once capacity frees", async () => {
+  it("survives delivered-capacity parks from two peers, keeps later entries attemptable, and completes both once capacity frees", async () => {
     const alice = generateIdentity();
     const carol = generateIdentity();
     const bob = reefKeys();
     const idA = "01JZ00000000000000000002A1";
     const idC = "01JZ00000000000000000002C1";
     const stores = flowStores(2);
-    await stores.delivered.reserve("occupied-1");
-    await stores.delivered.reserve("occupied-2");
+    await stores.delivered.add("occupied-1");
+    await stores.delivered.add("occupied-2");
 
     const entries = new Map<number, InboxEntry>([
       [1, messageEntry(1, "alice", await envelopeFrom(alice, "alice", bob, idA, "first"), idA)],
@@ -141,18 +141,18 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
       { initialCursor: 0, persistCursor: (cursor) => persisted.push(cursor) },
     );
 
-    // Full store: both entries park as retry-safe domain states. The shared
-    // connection survives and later entries are still attempted.
+    // Delivered namespace full: both entries park AFTER ingress as retry-safe
+    // domain states (reservations are in-memory, so capacity surfaces at
+    // confirm). The shared connection survives, later entries are still
+    // attempted, nothing is acknowledged, and the cursor is held.
     await inbox.drain();
-    expect(onIngress).not.toHaveBeenCalled();
+    expect(onIngress).toHaveBeenCalledTimes(2);
     expect(relay.acknowledge).not.toHaveBeenCalled();
     expect(persisted).toEqual([]);
 
     // Capacity frees (marker TTL expiry in production; explicit free here).
-    // Reopen with the same options the flow's reservation store uses (cap 2).
-    // Namespace literal mirrors the internal REEF_DELIVERED_PENDING_NAMESPACE.
     const raw = stores.runtime.state.openSyncKeyedStore<{ id: string }>({
-      namespace: "delivered-pending",
+      namespace: REEF_DELIVERED_NAMESPACE,
       maxEntries: 2,
       overflowPolicy: "reject-new",
       defaultTtlMs: REEF_DELIVERED_TTL_MS,
@@ -160,10 +160,11 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
     raw.delete("occupied-1");
     raw.delete("occupied-2");
 
-    // Re-poll: both parked entries complete in order, with ingress, confirmed
-    // markers, acknowledgments, and a persisted cursor past both.
+    // Re-poll: both parked entries complete in order, re-ingressing once more
+    // (bounded at-least-once), confirming markers, acknowledging, and
+    // persisting a cursor past both.
     await inbox.drain();
-    expect(onIngress).toHaveBeenCalledTimes(2);
+    expect(onIngress).toHaveBeenCalledTimes(4);
     expect(relay.acknowledge).toHaveBeenCalledTimes(2);
     await expect(stores.delivered.status(idA)).resolves.toBe("delivered");
     await expect(stores.delivered.status(idC)).resolves.toBe("delivered");
@@ -171,17 +172,18 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
 
     // A third poll is fully drained: nothing re-dispatches.
     await inbox.drain();
-    expect(onIngress).toHaveBeenCalledTimes(2);
+    expect(onIngress).toHaveBeenCalledTimes(4);
     expect(relay.acknowledge).toHaveBeenCalledTimes(2);
   });
 
-  it("an interrupted delivery with a reserved marker re-ingresses exactly once and confirms on restart", async () => {
+  it("an interrupted delivery before ingress re-ingresses exactly once and confirms on restart", async () => {
     const alice = generateIdentity();
     const bob = reefKeys();
     const id = "01JZ00000000000000000002D1";
     const stores = flowStores();
-    // Crash window: the marker was reserved before inbound handling ran.
-    await stores.delivered.reserve(id);
+    // Crash window: inbound handling had not run, so no in-flight record
+    // exists; the restart re-classifies the entry from persisted markers and
+    // re-ingresses exactly once.
     const entries = new Map<number, InboxEntry>([
       [1, messageEntry(1, "alice", await envelopeFrom(alice, "alice", bob, id, "resumed"), id)],
     ]);
@@ -229,6 +231,93 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
     expect(onIngress).toHaveBeenCalledTimes(1);
     expect(relay.acknowledge).toHaveBeenCalledTimes(2);
     expect(persisted.at(-1)).toBe(2);
+  });
+
+  it("a crash after ingress re-dispatches once on restart when capacity had blocked confirm", async () => {
+    const alice = generateIdentity();
+    const bob = reefKeys();
+    const id = "01JZ00000000000000000002E1";
+    const stores = flowStores(1);
+    await stores.delivered.add("occupied"); // delivered namespace full
+    const entries = new Map<number, InboxEntry>([
+      [1, messageEntry(1, "alice", await envelopeFrom(alice, "alice", bob, id, "crashed"), id)],
+    ]);
+    const { fetcher } = relayRetaining(entries);
+    const relay = transport();
+    const onIngress = vi.fn(async () => {});
+    const flow = new ReefMessageFlow({
+      config: config(),
+      trust: trust({ alice: peerTrust(alice) }).store,
+      keys: bob,
+      transport: relay as unknown as ReefTransportClient, // SAFETY: ack-recording mock satisfies the client contract
+      guard: guard(allow),
+      audit: new MemoryAuditStore(new Uint8Array(32).fill(33)),
+      replay: openStores(stores.runtime, reefKeys(), { deliveredMaxEntries: 1 }).replay,
+      ...stores,
+      onIngress,
+      onOwnerNotice: async () => {},
+    });
+    const persisted: number[] = [];
+    const inbox = new ReefInboxConnection(
+      createClient(fetcher),
+      async (batch) => {
+        await flow.processEntries(batch);
+      },
+      () => {
+        throw new Error("REST-only proof: no live socket expected");
+      },
+      { initialCursor: 0, persistCursor: (cursor) => persisted.push(cursor) },
+    );
+
+    // Capacity blocks confirm after ingress: the entry parks, un-acked.
+    await inbox.drain();
+    expect(onIngress).toHaveBeenCalledTimes(1);
+    expect(relay.acknowledge).not.toHaveBeenCalled();
+    expect(persisted).toEqual([]);
+
+    // Restart: fresh flow over freshly opened handles for the same persisted
+    // state directory. Capacity frees (marker TTL expiry in production;
+    // explicit free here); the restart re-classifies the entry and
+    // re-dispatches once — the documented bounded at-least-once trade.
+    const raw = stores.runtime.state.openSyncKeyedStore<{ id: string }>({
+      namespace: REEF_DELIVERED_NAMESPACE,
+      maxEntries: 1,
+      overflowPolicy: "reject-new",
+      defaultTtlMs: REEF_DELIVERED_TTL_MS,
+    });
+    raw.delete("occupied");
+    const reopened = openStores(reopenRuntime(stores.stateDir), reefKeys(), {
+      deliveredMaxEntries: 1,
+    });
+    const restartedFlow = new ReefMessageFlow({
+      config: config(),
+      trust: trust({ alice: peerTrust(alice) }).store,
+      keys: bob,
+      transport: relay as unknown as ReefTransportClient, // SAFETY: ack-recording mock satisfies the client contract
+      guard: guard(allow),
+      audit: new MemoryAuditStore(new Uint8Array(32).fill(34)),
+      replay: reopened.replay,
+      reviews: reopened.reviews,
+      delivered: reopened.delivered,
+      onIngress,
+      onOwnerNotice: async () => {},
+    });
+    const restartedInbox = new ReefInboxConnection(
+      createClient(fetcher),
+      async (batch) => {
+        await restartedFlow.processEntries(batch);
+      },
+      () => {
+        throw new Error("REST-only proof: no live socket expected");
+      },
+      { initialCursor: 0, persistCursor: (cursor) => persisted.push(cursor) },
+    );
+
+    await restartedInbox.drain();
+    expect(onIngress).toHaveBeenCalledTimes(2);
+    await expect(stores.delivered.status(id)).resolves.toBe("delivered");
+    expect(relay.acknowledge).toHaveBeenCalledTimes(1);
+    expect(persisted.at(-1)).toBe(1);
   });
 
   it("legacy stateless delivered markers suppress re-ingress and acknowledge on the next poll", async () => {

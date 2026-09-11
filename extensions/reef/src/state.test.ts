@@ -675,44 +675,47 @@ describe("Reef delivered marker two-phase delivery", () => {
     await expect(stores.delivered.status("m2")).resolves.toBe("delivered");
   });
 
-  it("surfaces capacity as PLUGIN_STATE_LIMIT_EXCEEDED from reserve and confirm without touching existing markers", async () => {
+  it("surfaces capacity as PLUGIN_STATE_LIMIT_EXCEEDED from confirm without touching existing markers", async () => {
     const stores = openStores(createRuntime(stateDir), testKeys(), {
       deliveredMaxEntries: 1,
     });
     await stores.delivered.add("first"); // delivered namespace full
-    // Reservations have their own capacity: one fits, the next fails closed.
+    // Reservations are in-memory, so they never consume store capacity and
+    // reserve cannot fail; capacity surfaces from confirm.
     await stores.delivered.reserve("second");
     await expect(stores.delivered.status("second")).resolves.toBe("pending");
-    await expect(stores.delivered.reserve("third")).rejects.toMatchObject({
-      code: "PLUGIN_STATE_LIMIT_EXCEEDED",
-    });
-    // Confirming into a full delivered namespace fails closed. The
-    // capacity-neutral transition frees the reservation first, so nothing stays
-    // stuck: the re-poll re-ingresses from a clean reservation.
+    // Confirming into a full delivered namespace fails closed. The in-memory
+    // reservation stays pending, so the re-poll re-ingresses and retries the
+    // confirmed marker instead of unwinding the shared inbox.
     await expect(stores.delivered.confirm("second")).rejects.toMatchObject({
       code: "PLUGIN_STATE_LIMIT_EXCEEDED",
     });
-    await expect(stores.delivered.status("second")).resolves.toBeUndefined();
+    await expect(stores.delivered.status("second")).resolves.toBe("pending");
     await expect(stores.delivered.status("first")).resolves.toBe("delivered");
     await expect(stores.delivered.status("third")).resolves.toBeUndefined();
   });
 
-  it("confirms a reservation at the plugin-wide aggregate limit by reusing its row", async () => {
+  it("parks confirm at the plugin-wide aggregate limit with the reservation retained", async () => {
     const stores = openStores(createRuntime(stateDir), testKeys(), {
       deliveredMaxEntries: REEF_DELIVERED_MAX_ENTRIES,
     });
-    // Squeeze the plugin-wide aggregate limit down to the reservation itself:
-    // the pending row occupies the last available live row.
+    // Fill the plugin-wide aggregate limit from another namespace's row:
+    // reservations never occupy store rows, so confirm is the only step that
+    // needs one and the parked entry retries bounded, at-least-once.
     setMaxPluginStateEntriesPerPluginForTests(1);
     try {
+      const other = createRuntime(stateDir).state.openSyncKeyedStore<{ id: string }>({
+        namespace: "reef-test-other",
+        maxEntries: REEF_DELIVERED_MAX_ENTRIES,
+        overflowPolicy: "reject-new",
+      });
+      other.registerIfAbsent("row-1", { id: "row-1" });
       await stores.delivered.reserve("aggregate-1");
       await expect(stores.delivered.status("aggregate-1")).resolves.toBe("pending");
-      // The transition is capacity-neutral: freeing the reservation makes room
-      // for the delivered marker, so confirmation cannot be blocked by the
-      // aggregate limit once ingress has run.
-      await stores.delivered.confirm("aggregate-1");
-      await expect(stores.delivered.status("aggregate-1")).resolves.toBe("delivered");
-      await expect(stores.delivered.has("aggregate-1")).resolves.toBe(true);
+      await expect(stores.delivered.confirm("aggregate-1")).rejects.toMatchObject({
+        code: "PLUGIN_STATE_LIMIT_EXCEEDED",
+      });
+      await expect(stores.delivered.status("aggregate-1")).resolves.toBe("pending");
     } finally {
       setMaxPluginStateEntriesPerPluginForTests();
     }

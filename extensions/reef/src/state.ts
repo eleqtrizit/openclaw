@@ -40,10 +40,6 @@ export const REEF_REPLAY_TTL_MS = (REEF_ENVELOPE_MAX_AGE_SECONDS + 24 * 60 * 60)
 export const REEF_REVIEWS_NAMESPACE = "reviews";
 export const REEF_REVIEWS_MAX_ENTRIES = 2_000;
 export const REEF_DELIVERED_NAMESPACE = "delivered";
-// Reservations live in their own namespace so the delivered namespace keeps its
-// exact historical record shape: older readers that treat any stored id as a
-// completed delivery can never mistake an unconfirmed reservation for one.
-const REEF_DELIVERED_PENDING_NAMESPACE = "delivered-pending";
 export const REEF_DELIVERED_MAX_ENTRIES = 5_000;
 export const REEF_DELIVERED_TTL_MS = REEF_REPLAY_TTL_MS;
 const REEF_INBOX_CURSOR_NAMESPACE = "inbox-cursor";
@@ -501,23 +497,20 @@ export class ReviewApprovalStore {
 
 export class ReefDeliveredStore {
   readonly #delivered: PluginStateSyncKeyedStore<{ id: string }>;
-  readonly #pending: PluginStateSyncKeyedStore<{ id: string }>;
+  // In-flight reservations are process-local: they classify entries within a
+  // single run while the persisted delivered markers and replay store carry
+  // the shipped cross-restart durability contract. A crash in the
+  // dispatch-confirm window re-dispatches once on restart — the same bounded
+  // at-least-once behavior the shipped store already exhibits.
+  readonly #reservations = new Set<string>();
 
   constructor(runtime: PluginRuntime, maxEntries = REEF_DELIVERED_MAX_ENTRIES) {
-    // The delivered namespace keeps the exact historical record shape so older
-    // readers can never mistake an unconfirmed reservation for a delivery.
     this.#delivered = runtime.state.openSyncKeyedStore<{ id: string }>({
       namespace: REEF_DELIVERED_NAMESPACE,
       maxEntries,
       overflowPolicy: "reject-new",
       // Relay redelivery is bounded by the same envelope-age contract as replay.
       // Keep markers longer than that window and fail closed at live capacity.
-      defaultTtlMs: REEF_DELIVERED_TTL_MS,
-    });
-    this.#pending = runtime.state.openSyncKeyedStore<{ id: string }>({
-      namespace: REEF_DELIVERED_PENDING_NAMESPACE,
-      maxEntries,
-      overflowPolicy: "reject-new",
       defaultTtlMs: REEF_DELIVERED_TTL_MS,
     });
   }
@@ -530,36 +523,26 @@ export class ReefDeliveredStore {
     if (this.#delivered.lookup(id)?.id === id) {
       return "delivered";
     }
-    return this.#pending.lookup(id)?.id === id ? "pending" : undefined;
+    return this.#reservations.has(id) ? "pending" : undefined;
   }
 
-  // Reserve the delivery marker BEFORE inbound handling. Capacity failures
-  // propagate so the caller can park the entry as a retry-safe domain state
+  // Reserve the delivery marker BEFORE inbound handling. Reservations are
+  // in-memory, so they never consume store capacity; capacity failures surface
+  // from confirm, and the caller parks the entry as a retry-safe domain state
   // instead of unwinding the shared inbox after ingress already ran.
   async reserve(id: string): Promise<void> {
-    if (this.#pending.lookup(id)?.id === id || this.#delivered.lookup(id)?.id === id) {
+    if (this.#reservations.has(id) || this.#delivered.lookup(id)?.id === id) {
       return;
     }
-    const inserted = this.#pending.registerIfAbsent(id, { id });
-    if (!inserted && this.#pending.lookup(id)?.id !== id) {
-      throw new Error("Failed persisting Reef delivered reservation");
-    }
+    this.#reservations.add(id);
   }
 
   async confirm(id: string): Promise<void> {
-    // Free the reservation row FIRST so the delivered insertion is
-    // capacity-neutral at the plugin-wide aggregate limit: the reservation and
-    // the marker never occupy two rows at once. A crash between the two steps
-    // leaves neither record; the re-poll re-ingresses at-least-once.
-    const deleteIf = this.#pending.deleteIf;
-    if (!deleteIf) {
-      throw new Error("Reef delivered state requires atomic plugin-state updates");
-    }
-    deleteIf(id, () => true);
     const inserted = this.#delivered.registerIfAbsent(id, { id });
     if (!inserted && this.#delivered.lookup(id)?.id !== id) {
       throw new Error("Failed persisting Reef delivered marker");
     }
+    this.#reservations.delete(id);
   }
 
   async add(id: string): Promise<void> {

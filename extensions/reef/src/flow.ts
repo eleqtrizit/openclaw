@@ -452,10 +452,11 @@ export class ReefMessageFlow {
       return;
     }
     if (markerState === undefined) {
-      // Durable delivery outcome before inbound handling: reserve the marker
-      // first so a capacity failure parks the entry before ingress can fire,
-      // and a retried already-handled entry is classified by marker state
-      // instead of re-entering inbound handling without a durable outcome.
+      // Reserve the marker before inbound handling so a retried
+      // already-handled entry is classified by marker state instead of
+      // re-entering inbound handling. In-flight reservations never consume
+      // store capacity, but any capacity error still parks the entry as a
+      // retry-safe domain state.
       try {
         await this.options.delivered.reserve(envelope.id);
       } catch (error) {

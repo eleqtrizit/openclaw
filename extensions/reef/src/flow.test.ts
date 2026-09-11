@@ -724,42 +724,6 @@ describe("ReefMessageFlow delivery-store capacity", () => {
     resetFlowStoresForTests();
   });
 
-  it("parks a new inbound message before ingress when the delivered reservation store is at capacity", async () => {
-    const alice = generateIdentity();
-    const bob = reefKeys();
-    const id = "01JZ0000000000000000000201";
-    const stores = flowStores(1);
-    await stores.delivered.reserve("occupied");
-    const onIngress = vi.fn(async () => {});
-    const relay = transport();
-    const flow = new ReefMessageFlow({
-      config: config(),
-      trust: trust({ alice: peerTrust(alice) }).store,
-      keys: bob,
-      transport: relay as unknown as ReefTransportClient, // SAFETY: test transport mock satisfies the client contract
-      guard: guard(allow),
-      audit: new MemoryAuditStore(new Uint8Array(32).fill(20)),
-      replay: new MemoryReplayStore(),
-      ...stores,
-      onIngress,
-      onOwnerNotice: async () => {},
-    });
-    const entry: InboxEntry = {
-      seq: 1,
-      peer: "alice",
-      id,
-      kind: "message",
-      envelope: await envelope(alice, bob, id, "should park, not re-enter"),
-      ts: Math.floor(Date.now() / 1_000),
-    };
-
-    await expect(flow.processEntries([entry])).rejects.toBeInstanceOf(ReefInboxEntryParkedError);
-    // Capacity failure must park BEFORE inbound handling: no dispatch, no ack.
-    expect(onIngress).not.toHaveBeenCalled();
-    expect(relay.acknowledge).not.toHaveBeenCalled();
-    await expect(stores.delivered.status(id)).resolves.toBeUndefined();
-  });
-
   it("parks after ingress with the reservation kept pending when the delivered store fills before confirm", async () => {
     const alice = generateIdentity();
     const bob = reefKeys();
@@ -790,13 +754,12 @@ describe("ReefMessageFlow delivery-store capacity", () => {
     };
 
     await expect(flow.processEntries([entry])).rejects.toBeInstanceOf(ReefInboxEntryParkedError);
-    // Ingress ran (reservation succeeded); the capacity-neutral confirm frees
-    // the reservation before the delivered insert, so the failed confirm leaves
-    // no stuck record: the entry parks and the re-poll re-ingresses from a
-    // clean reservation instead of unwinding the shared inbox.
+    // Ingress ran; the in-memory reservation stays pending across the failed
+    // confirm, so the entry parks and each re-poll re-ingresses and retries
+    // the confirmed marker instead of unwinding the shared inbox.
     expect(onIngress).toHaveBeenCalledTimes(1);
     expect(relay.acknowledge).not.toHaveBeenCalled();
-    await expect(stores.delivered.status(id)).resolves.toBeUndefined();
+    await expect(stores.delivered.status(id)).resolves.toBe("pending");
   });
 
   it("parks an inbound message before ingress when replay state is at capacity", async () => {
