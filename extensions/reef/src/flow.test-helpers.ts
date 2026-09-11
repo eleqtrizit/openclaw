@@ -45,6 +45,7 @@ export function flowStores(deliveredMaxEntries?: number) {
     });
   return {
     runtime,
+    stateDir,
     reviews: new ReviewApprovalStore(runtime),
     delivered:
       deliveredMaxEntries === undefined

@@ -4,13 +4,11 @@
 // mocked out. Covers shared-inbox survival, later-entry processing, recovery
 // once capacity frees, interrupted-delivery restart, and legacy marker
 // interpretation.
+import type { OpenKeyedStoreOptions } from "openclaw/plugin-sdk/plugin-state-runtime";
+import { createPluginStateSyncKeyedStoreForTests } from "openclaw/plugin-sdk/plugin-state-test-runtime";
+import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  composeOutbound,
-  generateIdentity,
-  MemoryAuditStore,
-  MemoryReplayStore,
-} from "../protocol/index.js";
+import { composeOutbound, generateIdentity, MemoryAuditStore } from "../protocol/index.js";
 import { ReefMessageFlow } from "./flow.js";
 import {
   allow,
@@ -28,12 +26,25 @@ import {
   REEF_DELIVERED_NAMESPACE,
   REEF_DELIVERED_PENDING_NAMESPACE,
   REEF_DELIVERED_TTL_MS,
+  openStores,
 } from "./state.js";
 import { ReefInboxConnection, type ReefTransportClient } from "./transport.js";
 import { createClient, parseRequestUrl } from "./transport.test-helpers.js";
 import type { InboxEntry, ReefKeys } from "./types.js";
 
 const ts = Math.floor(Date.now() / 1_000);
+
+// A fresh runtime over the same persisted state directory: new store handles,
+// same SQLite database — the production restart shape.
+function reopenRuntime(stateDir: string) {
+  const runtime = createPluginRuntimeMock();
+  runtime.state.openSyncKeyedStore = <T>(options: OpenKeyedStoreOptions) =>
+    createPluginStateSyncKeyedStoreForTests<T>("reef", {
+      ...options,
+      env: { OPENCLAW_STATE_DIR: stateDir },
+    });
+  return runtime;
+}
 
 async function envelopeFrom(
   sender: ReturnType<typeof generateIdentity>,
@@ -114,7 +125,7 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
       transport: relay as unknown as ReefTransportClient, // SAFETY: ack-recording mock satisfies the client contract
       guard: guard(allow),
       audit: new MemoryAuditStore(new Uint8Array(32).fill(30)),
-      replay: new MemoryReplayStore(),
+      replay: openStores(stores.runtime, reefKeys(), { deliveredMaxEntries: 2 }).replay,
       ...stores,
       onIngress,
       onOwnerNotice: async () => {},
@@ -177,7 +188,9 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
     const { fetcher } = relayRetaining(entries);
     const relay = transport();
     const onIngress = vi.fn(async () => {});
-    // Restart: a fresh flow over the same persisted stores.
+    // Restart: a fresh flow over freshly opened store handles for the same
+    // persisted state directory (production SQLite replay and delivered stores).
+    const reopened = openStores(reopenRuntime(stores.stateDir), reefKeys());
     const flow = new ReefMessageFlow({
       config: config(),
       trust: trust({ alice: peerTrust(alice) }).store,
@@ -185,8 +198,9 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
       transport: relay as unknown as ReefTransportClient, // SAFETY: ack-recording mock satisfies the client contract
       guard: guard(allow),
       audit: new MemoryAuditStore(new Uint8Array(32).fill(31)),
-      replay: new MemoryReplayStore(),
-      ...stores,
+      replay: reopened.replay,
+      reviews: reopened.reviews,
+      delivered: reopened.delivered,
       onIngress,
       onOwnerNotice: async () => {},
     });
@@ -242,7 +256,7 @@ describe("Reef capacity-parked delivery recovery (production connection path)", 
       transport: relay as unknown as ReefTransportClient, // SAFETY: ack-recording mock satisfies the client contract
       guard: guard(allow),
       audit: new MemoryAuditStore(new Uint8Array(32).fill(32)),
-      replay: new MemoryReplayStore(),
+      replay: openStores(stores.runtime, reefKeys()).replay,
       ...stores,
       onIngress,
       onOwnerNotice: async () => {},
