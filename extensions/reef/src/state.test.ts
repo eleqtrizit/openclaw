@@ -8,6 +8,7 @@ import type {
 import {
   createPluginStateSyncKeyedStoreForTests,
   resetPluginStateStoreForTests,
+  setMaxPluginStateEntriesPerPluginForTests,
 } from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -685,14 +686,36 @@ describe("Reef delivered marker two-phase delivery", () => {
     await expect(stores.delivered.reserve("third")).rejects.toMatchObject({
       code: "PLUGIN_STATE_LIMIT_EXCEEDED",
     });
-    // Confirming into a full delivered namespace fails closed and keeps the
-    // reservation pending for retry.
+    // Confirming into a full delivered namespace fails closed. The
+    // capacity-neutral transition frees the reservation first, so nothing stays
+    // stuck: the re-poll re-ingresses from a clean reservation.
     await expect(stores.delivered.confirm("second")).rejects.toMatchObject({
       code: "PLUGIN_STATE_LIMIT_EXCEEDED",
     });
-    await expect(stores.delivered.status("second")).resolves.toBe("pending");
+    await expect(stores.delivered.status("second")).resolves.toBeUndefined();
     await expect(stores.delivered.status("first")).resolves.toBe("delivered");
     await expect(stores.delivered.status("third")).resolves.toBeUndefined();
+  });
+
+  it("confirms a reservation at the plugin-wide aggregate limit by reusing its row", async () => {
+    const stores = openStores(createRuntime(stateDir), testKeys(), {
+      deliveredMaxEntries: REEF_DELIVERED_MAX_ENTRIES,
+    });
+    // Squeeze the plugin-wide aggregate limit down to the reservation itself:
+    // the pending row occupies the last available live row.
+    setMaxPluginStateEntriesPerPluginForTests(1);
+    try {
+      await stores.delivered.reserve("aggregate-1");
+      await expect(stores.delivered.status("aggregate-1")).resolves.toBe("pending");
+      // The transition is capacity-neutral: freeing the reservation makes room
+      // for the delivered marker, so confirmation cannot be blocked by the
+      // aggregate limit once ingress has run.
+      await stores.delivered.confirm("aggregate-1");
+      await expect(stores.delivered.status("aggregate-1")).resolves.toBe("delivered");
+      await expect(stores.delivered.has("aggregate-1")).resolves.toBe(true);
+    } finally {
+      setMaxPluginStateEntriesPerPluginForTests();
+    }
   });
 
   it("reads legacy delivered markers without a state as delivered", async () => {

@@ -790,12 +790,13 @@ describe("ReefMessageFlow delivery-store capacity", () => {
     };
 
     await expect(flow.processEntries([entry])).rejects.toBeInstanceOf(ReefInboxEntryParkedError);
-    // Ingress ran (reservation succeeded); the confirmed marker could not be
-    // persisted, so the entry parks and the reservation stays pending for the
-    // re-poll instead of unwinding the shared inbox.
+    // Ingress ran (reservation succeeded); the capacity-neutral confirm frees
+    // the reservation before the delivered insert, so the failed confirm leaves
+    // no stuck record: the entry parks and the re-poll re-ingresses from a
+    // clean reservation instead of unwinding the shared inbox.
     expect(onIngress).toHaveBeenCalledTimes(1);
     expect(relay.acknowledge).not.toHaveBeenCalled();
-    await expect(stores.delivered.status(id)).resolves.toBe("pending");
+    await expect(stores.delivered.status(id)).resolves.toBeUndefined();
   });
 
   it("parks an inbound message before ingress when replay state is at capacity", async () => {

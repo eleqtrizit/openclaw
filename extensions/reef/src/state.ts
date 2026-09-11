@@ -547,15 +547,19 @@ export class ReefDeliveredStore {
   }
 
   async confirm(id: string): Promise<void> {
-    const inserted = this.#delivered.registerIfAbsent(id, { id });
-    if (!inserted && this.#delivered.lookup(id)?.id !== id) {
-      throw new Error("Failed persisting Reef delivered marker");
-    }
+    // Free the reservation row FIRST so the delivered insertion is
+    // capacity-neutral at the plugin-wide aggregate limit: the reservation and
+    // the marker never occupy two rows at once. A crash between the two steps
+    // leaves neither record; the re-poll re-ingresses at-least-once.
     const deleteIf = this.#pending.deleteIf;
     if (!deleteIf) {
       throw new Error("Reef delivered state requires atomic plugin-state updates");
     }
     deleteIf(id, () => true);
+    const inserted = this.#delivered.registerIfAbsent(id, { id });
+    if (!inserted && this.#delivered.lookup(id)?.id !== id) {
+      throw new Error("Failed persisting Reef delivered marker");
+    }
   }
 
   async add(id: string): Promise<void> {
