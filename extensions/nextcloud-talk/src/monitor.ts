@@ -10,7 +10,10 @@ import {
   resolveRequestClientIp,
   requestBodyErrorToText,
 } from "openclaw/plugin-sdk/webhook-ingress";
-import { sendHttpRequestRejection } from "openclaw/plugin-sdk/webhook-request-guards";
+import {
+  runHttpConnectionRequest,
+  sendHttpRequestRejection,
+} from "openclaw/plugin-sdk/webhook-request-guards";
 import { extractNextcloudTalkHeaders, verifyNextcloudTalkSignature } from "./signature.js";
 import type { NextcloudTalkWebhookHeaders, NextcloudTalkWebhookServerOptions } from "./types.js";
 import { NextcloudTalkWebhookPayloadError } from "./webhook-spool-state.js";
@@ -156,110 +159,122 @@ export function createNextcloudTalkWebhookServer(opts: NextcloudTalkWebhookServe
     maxTrackedKeys: 1,
   });
 
+  const handleWebhookRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (req.url === HEALTH_PATH) {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+      return;
+    }
+
+    if (req.url !== path || req.method !== "POST") {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+
+    const clientIp =
+      resolveRequestClientIp(req, opts.trustedProxies, opts.allowRealIpFallback) ??
+      req.socket.remoteAddress ??
+      "unknown";
+    if (!webhookAuthRateLimiter.check(clientIp, WEBHOOK_AUTH_RATE_LIMIT_SCOPE).allowed) {
+      res.writeHead(429);
+      res.end("Too Many Requests");
+      return;
+    }
+
+    // Acquire before the unauthenticated read so overflow requests are rejected
+    // immediately instead of pinning a reader for the full pre-auth timeout.
+    if (!webhookInFlightLimiter.tryAcquire(WEBHOOK_IN_FLIGHT_KEY)) {
+      // Close-aware rejection frees the socket instead of leaving it half-open.
+      await sendHttpRequestRejection(req, res, 429, "Too Many Requests");
+      return;
+    }
+
+    let body: string;
+    try {
+      const headers = validateWebhookHeaders({
+        req,
+        res,
+        isBackendAllowed,
+      });
+      if (!headers) {
+        return;
+      }
+
+      body = await readBody(req, maxBodyBytes);
+
+      const hasValidSignature = verifyWebhookSignature({
+        headers,
+        body,
+        secret,
+        res,
+        clientIp,
+        authRateLimiter: webhookAuthRateLimiter,
+      });
+      if (!hasValidSignature) {
+        return;
+      }
+    } catch (err) {
+      if (isRequestBodyLimitError(err, "PAYLOAD_TOO_LARGE")) {
+        await rejectWebhookRequest(req, res, 413, WEBHOOK_ERRORS.payloadTooLarge);
+        return;
+      }
+      if (isRequestBodyLimitError(err, "REQUEST_BODY_TIMEOUT")) {
+        await rejectWebhookRequest(req, res, 408, requestBodyErrorToText("REQUEST_BODY_TIMEOUT"));
+        return;
+      }
+      if (err instanceof NextcloudTalkWebhookPayloadError) {
+        writeWebhookError(res, 400, WEBHOOK_ERRORS.invalidPayloadFormat);
+        return;
+      }
+      const error = err instanceof Error ? err : new Error(formatErrorMessage(err));
+      onError?.(error);
+      writeWebhookError(res, 500, WEBHOOK_ERRORS.internalServerError);
+      return;
+    } finally {
+      // Release before authenticated dispatch so a slow handler cannot exhaust
+      // the pre-auth admission budget for other deliveries.
+      webhookInFlightLimiter.release(WEBHOOK_IN_FLIGHT_KEY);
+    }
+
+    try {
+      // Nextcloud retries only a few times. Acknowledge only after the raw
+      // envelope is durably admitted; append failure must remain retryable.
+      const admission = await onWebhook(body);
+      if (admission === "accepted") {
+        // Ignored non-message events still receive 200 but must not claim
+        // durable adoption.
+        res.setHeader(
+          NEXTCLOUD_TALK_WEBHOOK_ACCEPTED_HEADER,
+          NEXTCLOUD_TALK_WEBHOOK_ACCEPTED_VALUE,
+        );
+      }
+      writeJsonResponse(res, 200);
+    } catch (err) {
+      if (err instanceof NextcloudTalkWebhookPayloadError) {
+        // Admission-stage envelope validation maps to the same 400 as read-stage
+        // payload failures; it is a permanent client error, not a server fault.
+        writeWebhookError(res, 400, WEBHOOK_ERRORS.invalidPayloadFormat);
+        return;
+      }
+      const error = err instanceof Error ? err : new Error(formatErrorMessage(err));
+      onError?.(error);
+      writeWebhookError(res, 500, WEBHOOK_ERRORS.internalServerError);
+    }
+  };
+
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    void (async () => {
-      if (req.url === HEALTH_PATH) {
-        res.writeHead(200, { "Content-Type": "text/plain" });
-        res.end("ok");
-        return;
-      }
-
-      if (req.url !== path || req.method !== "POST") {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-
-      const clientIp =
-        resolveRequestClientIp(req, opts.trustedProxies, opts.allowRealIpFallback) ??
-        req.socket.remoteAddress ??
-        "unknown";
-      if (!webhookAuthRateLimiter.check(clientIp, WEBHOOK_AUTH_RATE_LIMIT_SCOPE).allowed) {
-        res.writeHead(429);
-        res.end("Too Many Requests");
-        return;
-      }
-
-      // Acquire before the unauthenticated read so overflow requests are rejected
-      // immediately instead of pinning a reader for the full pre-auth timeout.
-      if (!webhookInFlightLimiter.tryAcquire(WEBHOOK_IN_FLIGHT_KEY)) {
-        // Close-aware rejection frees the socket instead of leaving it half-open.
-        await sendHttpRequestRejection(req, res, 429, "Too Many Requests");
-        return;
-      }
-
-      let body: string;
-      try {
-        const headers = validateWebhookHeaders({
-          req,
-          res,
-          isBackendAllowed,
-        });
-        if (!headers) {
-          return;
+    // Per-connection ordering: a pipelined request must not reach the overflow
+    // rejection until every earlier response on this connection finished, or the
+    // rejection's close timer could destroy an unflushed acknowledgement.
+    void runHttpConnectionRequest(req, () => handleWebhookRequest(req, res), res).catch(
+      (error: unknown) => {
+        onError?.(error instanceof Error ? error : new Error(formatErrorMessage(error)));
+        if (!res.destroyed && typeof res.destroy === "function") {
+          res.destroy();
         }
-
-        body = await readBody(req, maxBodyBytes);
-
-        const hasValidSignature = verifyWebhookSignature({
-          headers,
-          body,
-          secret,
-          res,
-          clientIp,
-          authRateLimiter: webhookAuthRateLimiter,
-        });
-        if (!hasValidSignature) {
-          return;
-        }
-      } catch (err) {
-        if (isRequestBodyLimitError(err, "PAYLOAD_TOO_LARGE")) {
-          await rejectWebhookRequest(req, res, 413, WEBHOOK_ERRORS.payloadTooLarge);
-          return;
-        }
-        if (isRequestBodyLimitError(err, "REQUEST_BODY_TIMEOUT")) {
-          await rejectWebhookRequest(req, res, 408, requestBodyErrorToText("REQUEST_BODY_TIMEOUT"));
-          return;
-        }
-        if (err instanceof NextcloudTalkWebhookPayloadError) {
-          writeWebhookError(res, 400, WEBHOOK_ERRORS.invalidPayloadFormat);
-          return;
-        }
-        const error = err instanceof Error ? err : new Error(formatErrorMessage(err));
-        onError?.(error);
-        writeWebhookError(res, 500, WEBHOOK_ERRORS.internalServerError);
-        return;
-      } finally {
-        // Release before authenticated dispatch so a slow handler cannot exhaust
-        // the pre-auth admission budget for other deliveries.
-        webhookInFlightLimiter.release(WEBHOOK_IN_FLIGHT_KEY);
-      }
-
-      try {
-        // Nextcloud retries only a few times. Acknowledge only after the raw
-        // envelope is durably admitted; append failure must remain retryable.
-        const admission = await onWebhook(body);
-        if (admission === "accepted") {
-          // Ignored non-message events still receive 200 but must not claim
-          // durable adoption.
-          res.setHeader(
-            NEXTCLOUD_TALK_WEBHOOK_ACCEPTED_HEADER,
-            NEXTCLOUD_TALK_WEBHOOK_ACCEPTED_VALUE,
-          );
-        }
-        writeJsonResponse(res, 200);
-      } catch (err) {
-        if (err instanceof NextcloudTalkWebhookPayloadError) {
-          // Admission-stage envelope validation maps to the same 400 as read-stage
-          // payload failures; it is a permanent client error, not a server fault.
-          writeWebhookError(res, 400, WEBHOOK_ERRORS.invalidPayloadFormat);
-          return;
-        }
-        const error = err instanceof Error ? err : new Error(formatErrorMessage(err));
-        onError?.(error);
-        writeWebhookError(res, 500, WEBHOOK_ERRORS.internalServerError);
-      }
-    })();
+      },
+    );
   });
 
   let stopRequested = false;
