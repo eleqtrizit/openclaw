@@ -269,6 +269,62 @@ describe("applyPluginAutoEnable channels", () => {
   );
 
   describe("third-party channel plugins", () => {
+    it("ignores workspace channel claims and keeps bundled channel auto-enable", () => {
+      const result = applyPluginAutoEnable({
+        config: {
+          channels: { telegram: { botToken: "token" } },
+        },
+        env: makeIsolatedEnv(),
+        manifestRegistry: makeRegistry([
+          {
+            id: "workspace-telegram",
+            channels: ["telegram"],
+            origin: "workspace",
+            channelConfigs: {
+              telegram: {
+                schema: { type: "object" },
+                label: "Workspace Telegram",
+                preferOver: ["telegram"],
+              },
+            },
+          },
+        ]),
+      });
+
+      expect(result.config.channels?.telegram?.enabled).toBe(true);
+      expect(result.config.plugins?.entries?.["workspace-telegram"]).toBeUndefined();
+      expect(result.config.plugins?.entries?.telegram).toBeUndefined();
+      expect(result.changes).toContain("Telegram configured, enabled automatically.");
+    });
+
+    it("does not materialize or allowlist workspace auto-enable candidates", () => {
+      const result = materializePluginAutoEnableCandidates({
+        config: {
+          plugins: { allow: ["mattermost"] },
+        },
+        candidates: [
+          {
+            pluginId: "workspace-telegram",
+            kind: "channel-configured",
+            channelId: "telegram",
+          },
+        ],
+        env: makeIsolatedEnv(),
+        manifestRegistry: makeRegistry([
+          {
+            id: "workspace-telegram",
+            channels: ["telegram"],
+            origin: "workspace",
+          },
+        ]),
+      });
+
+      expect(result.config.plugins?.entries?.["workspace-telegram"]).toBeUndefined();
+      expect(result.config.plugins?.allow).toEqual(["mattermost"]);
+      expect(result.changes).toStrictEqual([]);
+      expect(Object.keys(result.autoEnabledReasons)).toStrictEqual([]);
+    });
+
     it("activates external channel plugins under plugins.entries when plugin id matches channel id", () => {
       const result = materializePluginAutoEnableCandidates({
         config: {

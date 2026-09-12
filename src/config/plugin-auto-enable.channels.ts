@@ -25,8 +25,10 @@ function collectPluginIdsForConfiguredChannel(
 ): string[] {
   const normalizedChannelId = normalizeManifestChannelId(channelId);
   const builtInId = normalizeChatChannelId(normalizedChannelId);
-  const claims = registry.plugins.filter((record) =>
-    record.channels.some((id) => normalizeManifestChannelId(id) === normalizedChannelId),
+  const claims = registry.plugins.filter(
+    (record) =>
+      record.origin !== "workspace" &&
+      record.channels.some((id) => normalizeManifestChannelId(id) === normalizedChannelId),
   );
 
   if (claims.length === 0) {

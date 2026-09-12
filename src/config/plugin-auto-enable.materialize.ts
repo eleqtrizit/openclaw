@@ -283,8 +283,14 @@ export function materializePluginAutoEnableCandidatesInternal(params: {
   }
 
   const preferOverCache = new Map<string, string[]>();
+  const workspacePluginIds = new Set(
+    params.manifestRegistry.plugins
+      .filter((plugin) => plugin.origin === "workspace")
+      .map((plugin) => plugin.id),
+  );
+  const candidates = params.candidates.filter((entry) => !workspacePluginIds.has(entry.pluginId));
 
-  for (const entry of params.candidates) {
+  for (const entry of candidates) {
     const builtInChannelId = resolveAutoEnableChannelId({
       entry,
       manifestRegistry: params.manifestRegistry,
@@ -296,7 +302,7 @@ export function materializePluginAutoEnableCandidatesInternal(params: {
       shouldSkipPreferredPluginAutoEnable({
         config: next,
         entry,
-        configured: params.candidates,
+        configured: candidates,
         env: params.env,
         registry: params.manifestRegistry,
         isPluginDenied,
