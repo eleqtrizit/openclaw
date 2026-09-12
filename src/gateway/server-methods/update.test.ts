@@ -135,6 +135,24 @@ describe("update.run acknowledgement", () => {
       verification: { noticeDelivered: false },
     });
   });
+  it("keeps update notices off channels with actions.sendMessage disabled", async () => {
+    // The lifecycle-notice path is an outbound send: a channel configured with
+    // actions.sendMessage=false must not receive update notices even when the
+    // selected chat is a configured command owner.
+    const response = await captureUpdateRunPayload(
+      { sessionKey },
+      {
+        update: {},
+        commands: { ownerAllowFrom: ["slack:C0123ABC", "slack:C0456DEF"] },
+        channels: { slack: { actions: { sendMessage: false } } },
+      },
+    );
+    expect(response).toMatchObject({ ok: true, ackDelivered: false, ackQueued: false });
+    expect(sendGatewayLifecycleNoticeMock).not.toHaveBeenCalled();
+    expect(getUpdateRun(expectDefined(response, "update response").runId)).toMatchObject({
+      verification: { noticeDelivered: false },
+    });
+  });
 
   it.each([false, true])(
     "awaits the chat acknowledgement before updating (managed=%s)",
