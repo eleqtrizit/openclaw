@@ -139,12 +139,28 @@ describe("update.run acknowledgement", () => {
     // The lifecycle-notice path is an outbound send: a channel configured with
     // actions.sendMessage=false must not receive update notices even when the
     // selected chat is a configured command owner.
+    const sessions = await import("../../config/sessions.js");
+    vi.mocked(sessions.extractDeliveryInfo).mockImplementationOnce(() => ({
+      deliveryContext: { channel: "telegram", to: "12345" },
+      threadId: undefined,
+    }));
+    resolveGatewayLifecycleNoticeRouteMock.mockImplementationOnce(
+      ({ deliveryContext, threadId }) =>
+        deliveryContext?.channel === "telegram" && deliveryContext.to
+          ? {
+              ...deliveryContext,
+              channel: "telegram",
+              to: deliveryContext.to,
+              threadId,
+            }
+          : undefined,
+    );
     const response = await captureUpdateRunPayload(
-      { sessionKey },
+      { sessionKey: "agent:main:telegram:dm:12345" },
       {
         update: {},
-        commands: { ownerAllowFrom: ["slack:C0123ABC", "slack:C0456DEF"] },
-        channels: { slack: { actions: { sendMessage: false } } },
+        commands: { ownerAllowFrom: ["telegram:12345"] },
+        channels: { telegram: { actions: { sendMessage: false } } },
       },
     );
     expect(response).toMatchObject({ ok: true, ackDelivered: false, ackQueued: false });
