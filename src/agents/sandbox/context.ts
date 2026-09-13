@@ -18,6 +18,10 @@ import { defaultRuntime } from "../../runtime.js";
 import { createLazyRuntimeNamedExport } from "../../shared/lazy-runtime.js";
 import type { SkillEligibilityContext, SkillSnapshot, SkillUsagePath } from "../../skills/types.js";
 import type { ExecPolicyOverrides } from "../exec-defaults.js";
+import {
+  resolveSubagentAttachmentRootDir,
+  SANDBOX_SUBAGENT_ATTACHMENTS_MOUNT,
+} from "../subagents/subagent-attachment-paths.js";
 import { createSandboxBackend, getSandboxBackendWorkdirResolver } from "./backend.js";
 import { ensureSandboxBrowser } from "./browser.js";
 import { resolveSandboxConfigForAgent } from "./config.js";
@@ -286,6 +290,25 @@ async function resolveProvisionedSandboxContext(
     workspaceDir,
   });
   const resolvedCfg = docker === cfg.docker ? cfg : { ...cfg, docker };
+  const readOnlyResourceMounts =
+    resolvedCfg.scope === "shared"
+      ? undefined
+      : await (async () => {
+          const hostPath = resolveSubagentAttachmentRootDir(runtime.agentId);
+          try {
+            if (!(await fs.stat(hostPath)).isDirectory()) {
+              return undefined;
+            }
+            return [
+              {
+                hostPath: await fs.realpath(hostPath),
+                containerPath: SANDBOX_SUBAGENT_ATTACHMENTS_MOUNT,
+              },
+            ];
+          } catch {
+            return undefined;
+          }
+        })();
 
   const registeredRuntimeIds = await readRegisteredSandboxRuntimeIds({
     backendId: resolvedCfg.backend,
@@ -298,6 +321,7 @@ async function resolveProvisionedSandboxContext(
     workspaceDir,
     agentWorkspaceDir,
     skillsWorkspaceDir,
+    readOnlyResourceMounts,
     cfg: resolvedCfg,
     ...(params.requireCurrentConfig !== undefined
       ? { requireCurrentConfig: params.requireCurrentConfig }
@@ -354,6 +378,7 @@ async function resolveProvisionedSandboxContext(
     skillsWorkspaceDir,
     ...(skillsEligibility ? { skillsEligibility } : {}),
     ...(skillUsagePaths ? { skillUsagePaths } : {}),
+    ...(readOnlyResourceMounts ? { readOnlyResourceMounts } : {}),
     workspaceAccess: resolvedCfg.workspaceAccess,
     runtimeId: backend.runtimeId,
     runtimeLabel: backend.runtimeLabel,

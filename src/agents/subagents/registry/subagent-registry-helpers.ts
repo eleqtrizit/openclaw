@@ -14,12 +14,12 @@ import { patchSessionEntryCore } from "../../../config/sessions/session-accessor
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { computeBackoff } from "../../../infra/backoff.js";
 import { defaultRuntime } from "../../../runtime.js";
-import { cleanupMaterializedSubagentAttachments } from "../subagent-attachment-cleanup.js";
 import {
   recordGatewaySessionRunFailure,
   resolveSessionRunError,
 } from "../../../sessions/session-run-error.js";
 import { truncateUtf8Prefix } from "../../../utils/utf8-truncate.js";
+import { cleanupMaterializedSubagentAttachments } from "../subagent-attachment-cleanup.js";
 import { getDeliveryAttemptCount, getDeliveryLastError } from "./subagent-delivery-state.js";
 import { SUBAGENT_ENDED_REASON_KILLED } from "./subagent-lifecycle-events.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
@@ -207,14 +207,15 @@ export async function persistSubagentSessionTiming(
 
 /** Best-effort async removal for a subagent attachment directory. */
 export async function safeRemoveAttachmentsDir(entry: SubagentRunRecord): Promise<boolean> {
-  if (!entry.attachmentWorkspaceDir || !entry.attachmentRelDir) {
-    return false;
+  if (!entry.attachmentId) {
+    // Legacy absolute/workspace paths are untrusted and intentionally retired without traversal.
+    return true;
   }
 
   try {
     await cleanupMaterializedSubagentAttachments({
-      workspaceDir: entry.attachmentWorkspaceDir,
-      relDir: entry.attachmentRelDir,
+      childSessionKey: entry.childSessionKey,
+      attachmentId: entry.attachmentId,
     });
     return true;
   } catch {

@@ -129,7 +129,7 @@ export function installSpawnAttachmentFixture(params: {
   entered: () => void;
   release: Promise<void>;
 }) {
-  const root = path.join(params.stateDir, ".openclaw", "attachments");
+  const root = path.join(params.stateDir, "attachments", "subagents", "main");
   const lateWrites: string[] = [];
   const attachmentDirs: string[] = [];
   const mkdir = fs.mkdir;
@@ -150,18 +150,22 @@ export function installSpawnAttachmentFixture(params: {
   const createStore = privateStores.privateFileStore;
   const storeSpy = vi.spyOn(privateStores, "privateFileStore").mockImplementation((rootDir) => {
     const store = createStore(rootDir);
-    if (path.dirname(rootDir) !== root) {
+    if (rootDir !== root) {
       return store;
     }
     return {
       ...store,
       writeText: async (...args) => {
+        const attachmentDir = path.join(rootDir, args[0].split("/")[0] ?? "");
+        if (!attachmentDirs.includes(attachmentDir)) {
+          attachmentDirs.push(attachmentDir);
+        }
         if (!getAdmittedRunDelegatedAuthority(params.admitted)) {
           lateWrites.push("content");
         }
         const result = await store.writeText(...args);
         expect(await fs.readFile(path.join(rootDir, args[0]), "utf8")).toBe("synthetic attachment");
-        if (params.pauseAt === "files") {
+        if (params.pauseAt === "directory" || params.pauseAt === "files") {
           params.entered();
           await params.release;
         }

@@ -266,7 +266,14 @@ describe("pending spawn preparation authority", () => {
           const details = (outcome as { details: { attachments: { relDir: string } } }).details;
           expect(
             await fs.readFile(
-              path.join(fixture.stateDir, details.attachments.relDir, "synthetic.txt"),
+              path.join(
+                fixture.stateDir,
+                "attachments",
+                "subagents",
+                "main",
+                path.basename(details.attachments.relDir),
+                "synthetic.txt",
+              ),
               "utf8",
             ),
           ).toBe("synthetic attachment");
@@ -602,7 +609,7 @@ describe("pending spawn preparation authority", () => {
         .toEqual([]);
       expect(bindingFixture?.bindings ?? []).toEqual([]);
       for (const directory of attachmentFixture?.attachmentDirs ?? []) {
-        await expect(fs.stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(fs.stat(directory), directory).rejects.toMatchObject({ code: "ENOENT" });
       }
       expect(deleted).toEqual([childSessionKey]);
       expect(loadSessionEntry({ storePath, sessionKey: childSessionKey })).toBeUndefined();
