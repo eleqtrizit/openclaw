@@ -103,6 +103,7 @@ Controls inline attachment support for `sessions_spawn`.
     - Base64 inputs are validated with strict alphabet/padding checks and a pre-decode size guard.
     - Subagent attachment file permissions are `0700` for directories and `0600` for files.
     - Subagent cleanup follows the `cleanup` policy: `delete` always removes attachments; `keep` retains them only when `retainOnSessionKeep: true`.
+    - Upgrading from a pre-`readOnlyResourceMounts` release: previously staged attachments remain in their child workspaces at `.openclaw/attachments/<uuid>/`. Their registry records retire without deleting or traversing those files, so remove leftovers with your normal workspace cleanup. New spawns stage in Gateway-owned state; tooling must use the path supplied in the attachment receipt or child prompt instead of the old workspace-relative location.
 
   </Accordion>
 </AccordionGroup>
