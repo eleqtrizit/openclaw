@@ -1,5 +1,5 @@
 /** Removes host-owned subagent attachment artifacts by generated identity. */
-import fsSync, { promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { resolveSubagentAttachmentDir } from "./subagent-attachment-paths.js";
 
@@ -14,6 +14,7 @@ function resolveOwnedAttachmentDir(params: {
   }
   return resolveSubagentAttachmentDir({
     agentId: resolveAgentIdFromSessionKey(params.childSessionKey),
+    childSessionKey: params.childSessionKey,
     attachmentId: params.attachmentId,
   });
 }
@@ -23,11 +24,4 @@ export async function cleanupMaterializedSubagentAttachments(params: {
   attachmentId: string;
 }): Promise<void> {
   await fs.rm(resolveOwnedAttachmentDir(params), { recursive: true, force: true });
-}
-
-export function cleanupMaterializedSubagentAttachmentsSync(params: {
-  childSessionKey: string;
-  attachmentId: string;
-}): void {
-  fsSync.rmSync(resolveOwnedAttachmentDir(params), { recursive: true, force: true });
 }

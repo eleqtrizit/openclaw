@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultRuntime } from "../../../runtime.js";
+import { resolveSubagentAttachmentDir } from "../subagent-attachment-paths.js";
 import { updateSwarmCollectorCompletion } from "../swarm/swarm-collector.js";
 import {
   capFrozenResultText,
@@ -190,14 +191,22 @@ describe("safeRemoveAttachmentsDir", () => {
   it("removes only the generated directory under the host-owned root", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-attachment-state-"));
     const attachmentId = "2d4a8398-4d5a-4c20-9c16-0a5f6627cf92";
-    const attachmentDir = path.join(stateDir, "attachments", "subagents", "main", attachmentId);
+    const childSessionKey = "agent:main:subagent:child";
+    const attachmentDir = resolveSubagentAttachmentDir({
+      agentId: "main",
+      childSessionKey,
+      attachmentId,
+      env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
+    });
     const siblingDir = path.join(stateDir, "attachments", "subagents", "main", "sibling");
     await fs.mkdir(attachmentDir, { recursive: true });
     await fs.mkdir(siblingDir, { recursive: true });
     await fs.writeFile(path.join(attachmentDir, "staged.txt"), "staged");
     vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
 
-    await expect(safeRemoveAttachmentsDir(createRunEntry({ attachmentId }))).resolves.toBe(true);
+    await expect(
+      safeRemoveAttachmentsDir(createRunEntry({ attachmentId, childSessionKey })),
+    ).resolves.toBe(true);
     await expect(fs.access(attachmentDir)).rejects.toHaveProperty("code", "ENOENT");
     await expect(fs.access(siblingDir)).resolves.toBeUndefined();
 

@@ -28,7 +28,6 @@ import { buildSandboxFsMounts } from "./sandbox/fs-paths.js";
 import { resolveReadOnlyWorkspaceSkillMounts } from "./sandbox/workspace-mounts.js";
 import { createLsTool, type LsOperations } from "./sessions/tools/ls.js";
 import { createReadTool } from "./sessions/tools/read.js";
-import { resolveSubagentAttachmentRootDir } from "./subagents/subagent-attachment-paths.js";
 import { resolveToolResultBudget } from "./tool-result-limits.js";
 
 function sandboxReadMounts(
@@ -66,6 +65,7 @@ function guardHostWorkspaceTool(
 
 type CoreCodingToolsOptions = {
   abortSignal?: AbortSignal;
+  attachmentReadRoot?: string;
   agentId?: string;
   codingRoot: string;
   containmentRoot: string;
@@ -103,8 +103,7 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
   }
 
   const skillReadRoots = sandboxRoot ? undefined : resolveSkillReadRoots(options.skillsSnapshot);
-  const attachmentReadRoot =
-    !sandboxRoot && options.agentId ? resolveSubagentAttachmentRootDir(options.agentId) : undefined;
+  const attachmentReadRoot = !sandboxRoot ? options.attachmentReadRoot : undefined;
   const hostReadRoots = [
     ...(skillReadRoots ?? []),
     ...(attachmentReadRoot && fs.existsSync(attachmentReadRoot) ? [attachmentReadRoot] : []),

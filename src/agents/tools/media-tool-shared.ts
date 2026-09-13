@@ -556,7 +556,7 @@ function resolveMediaToolLocalRoots(
   }
   // Channel inbound attachment roots stay separate: those paths are scoped to inbound media
   // access, not broad host-local file reads.
-  const roots = getDefaultLocalRootsCore();
+  const roots = getDefaultLocalRootsCore().concat(options?.additionalRoots ?? []);
   return uniqueStrings([...roots, ...(workspaceDir ? [workspaceDir] : [])]);
 }
 

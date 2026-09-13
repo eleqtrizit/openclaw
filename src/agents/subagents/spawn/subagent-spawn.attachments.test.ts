@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { withEnvAsync } from "../../../test-utils/env.js";
+import { resolveSubagentAttachmentDir } from "../subagent-attachment-paths.js";
 import {
   cleanupMaterializedSubagentAttachments,
   materializeSubagentAttachments,
@@ -97,8 +98,13 @@ describe("spawnSubagentDirect filename validation", () => {
     return agentCall?.params?.extraSystemPrompt ?? "";
   }
 
-  function resolveStagedDir(relDir: string): string {
-    return path.join(stateDirOverride, "attachments", "subagents", "main", path.basename(relDir));
+  function resolveStagedDir(relDir: string, childSessionKey: string): string {
+    return resolveSubagentAttachmentDir({
+      agentId: "main",
+      childSessionKey,
+      attachmentId: path.basename(relDir),
+      env: { ...process.env, OPENCLAW_STATE_DIR: stateDirOverride },
+    });
   }
 
   it.each([
@@ -227,7 +233,10 @@ describe("spawnSubagentDirect filename validation", () => {
     expect(result.attachments?.files[0]?.name).toBe("receipt.jpg");
     const relDir = result.attachments?.relDir ?? "";
     expect(relDir).toMatch(/^\.openclaw\/attachments\/[0-9a-f-]{36}$/);
-    const stagedFile = path.join(resolveStagedDir(relDir), "receipt.jpg");
+    const stagedFile = path.join(
+      resolveStagedDir(relDir, result.childSessionKey as string),
+      "receipt.jpg",
+    );
     expect(fs.statSync(stagedFile).isFile()).toBe(true);
 
     const childSystemPrompt = getChildSystemPrompt();
@@ -249,6 +258,7 @@ describe("spawnSubagentDirect filename validation", () => {
     });
     const result = await materializeSubagentAttachments({
       config: configOverride,
+      childSessionKey: "agent:main:subagent:attachment-sandbox-path",
       targetAgentId: "main",
       sandboxed: true,
       attachments: [{ name: "receipt.jpg", content: validContent, encoding: "base64" }],
@@ -274,6 +284,7 @@ describe("spawnSubagentDirect filename validation", () => {
     await expect(
       materializeSubagentAttachments({
         config: configOverride,
+        childSessionKey: "agent:main:subagent:attachment-unsupported-backend",
         targetAgentId: "main",
         sandboxed: true,
         attachments: [{ name: "receipt.jpg", content: validContent, encoding: "base64" }],
@@ -297,7 +308,7 @@ describe("spawnSubagentDirect filename validation", () => {
 
     expect(result.status).toBe("accepted");
     const relDir = result.attachments?.relDir ?? "";
-    const stagedDir = resolveStagedDir(relDir);
+    const stagedDir = resolveStagedDir(relDir, result.childSessionKey as string);
     expect(fs.existsSync(path.join(stagedDir, "receipt.jpg"))).toBe(true);
 
     await cleanupMaterializedSubagentAttachments({
@@ -315,7 +326,10 @@ describe("spawnSubagentDirect filename validation", () => {
     expect(result.attachments?.files[0]?.name).toBe(instructionName);
 
     const relDir = result.attachments?.relDir ?? "";
-    const stagedFile = path.join(resolveStagedDir(relDir), instructionName);
+    const stagedFile = path.join(
+      resolveStagedDir(relDir, result.childSessionKey as string),
+      instructionName,
+    );
     expect(fs.statSync(stagedFile).isFile()).toBe(true);
 
     const childSystemPrompt = getChildSystemPrompt();
@@ -335,7 +349,7 @@ describe("spawnSubagentDirect filename validation", () => {
     expect(result.attachments?.files[0]?.name).toBe(name);
 
     const relDir = result.attachments?.relDir ?? "";
-    const stagedFile = path.join(resolveStagedDir(relDir), name);
+    const stagedFile = path.join(resolveStagedDir(relDir, result.childSessionKey as string), name);
     expect(fs.statSync(stagedFile).isFile()).toBe(true);
 
     const childSystemPrompt = getChildSystemPrompt();
@@ -377,7 +391,11 @@ describe("spawnSubagentDirect filename validation", () => {
 
       expect(result.status).toBe("accepted");
       const relDir = result.attachments?.relDir ?? "";
-      expect(fs.existsSync(path.join(resolveStagedDir(relDir), "file.txt"))).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(resolveStagedDir(relDir, result.childSessionKey as string), "file.txt"),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(path.join(explicitWorkspaceDir, ".openclaw", "attachments"))).toBe(
         false,
       );
@@ -415,7 +433,11 @@ describe("spawnSubagentDirect filename validation", () => {
 
         expect(result.status).toBe("accepted");
         expect(fs.existsSync(path.join(expectedCwd, ".openclaw", "attachments"))).toBe(false);
-        expect(fs.existsSync(resolveStagedDir(result.attachments?.relDir ?? ""))).toBe(true);
+        expect(
+          fs.existsSync(
+            resolveStagedDir(result.attachments?.relDir ?? "", result.childSessionKey as string),
+          ),
+        ).toBe(true);
         const childSessionKey = result.childSessionKey as string;
         expect(persistedStore?.[childSessionKey]?.spawnedCwd).toBe(expectedCwd);
       });
@@ -444,7 +466,12 @@ describe("spawnSubagentDirect filename validation", () => {
 
       expect(result).toMatchObject({ status: "accepted" });
       expect(
-        fs.existsSync(path.join(resolveStagedDir(result.attachments?.relDir ?? ""), "marker.txt")),
+        fs.existsSync(
+          path.join(
+            resolveStagedDir(result.attachments?.relDir ?? "", result.childSessionKey as string),
+            "marker.txt",
+          ),
+        ),
       ).toBe(true);
       expect(fs.existsSync(path.join(escapedDir, "marker.txt"))).toBe(false);
       expect(fs.readFileSync(path.join(escapedDir, "sentinel.txt"), "utf8")).toBe("must-survive");

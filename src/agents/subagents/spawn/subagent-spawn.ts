@@ -302,6 +302,7 @@ export async function spawnSubagentDirect(
     const materializedAttachments = await materializeSubagentAttachments({
       assertActive,
       config: cfg,
+      childSessionKey,
       targetAgentId,
       sandboxed: childRuntimeSandboxed,
       attachments: params.attachments,

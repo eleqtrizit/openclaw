@@ -135,7 +135,7 @@ export function installSpawnAttachmentFixture(params: {
   const mkdir = fs.mkdir;
   const mkdirSpy = vi.spyOn(fs, "mkdir").mockImplementation(async (...args) => {
     const result = await mkdir(...args);
-    if (typeof args[0] === "string" && path.dirname(args[0]) === root) {
+    if (typeof args[0] === "string" && path.dirname(path.dirname(args[0])) === root) {
       attachmentDirs.push(args[0]);
       if (!getAdmittedRunDelegatedAuthority(params.admitted)) {
         lateWrites.push("directory");
@@ -150,7 +150,7 @@ export function installSpawnAttachmentFixture(params: {
   const createStore = privateStores.privateFileStore;
   const storeSpy = vi.spyOn(privateStores, "privateFileStore").mockImplementation((rootDir) => {
     const store = createStore(rootDir);
-    if (rootDir !== root) {
+    if (path.dirname(rootDir) !== root) {
       return store;
     }
     return {

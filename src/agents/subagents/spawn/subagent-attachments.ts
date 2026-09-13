@@ -16,7 +16,7 @@ import {
   wrapUntrustedPromptDataBlock,
 } from "../../sanitize-for-prompt.js";
 import {
-  resolveSubagentAttachmentRootDir,
+  resolveSubagentSessionAttachmentRootDir,
   SANDBOX_SUBAGENT_ATTACHMENTS_MOUNT,
 } from "../subagent-attachment-paths.js";
 
@@ -68,7 +68,7 @@ type AttachmentLimits = {
   retainOnSessionKeep: boolean;
 };
 
-export type SubagentAttachmentReceiptFile = {
+type SubagentAttachmentReceiptFile = {
   name: string;
   bytes: number;
   sha256: string;
@@ -322,6 +322,7 @@ export function resolveAcpSessionsSpawnImageAttachments(params: {
 export async function materializeSubagentAttachments(params: {
   assertActive?: () => void;
   config: OpenClawConfig;
+  childSessionKey: string;
   targetAgentId: string;
   sandboxed: boolean;
   attachments?: SubagentInlineAttachment[];
@@ -352,7 +353,10 @@ export async function materializeSubagentAttachments(params: {
   }
 
   const attachmentId = crypto.randomUUID();
-  const absRootDir = resolveSubagentAttachmentRootDir(params.targetAgentId);
+  const absRootDir = resolveSubagentSessionAttachmentRootDir({
+    agentId: params.targetAgentId,
+    childSessionKey: params.childSessionKey,
+  });
   const relDir = path.posix.join(".openclaw", "attachments", attachmentId);
   const absDir = path.join(absRootDir, attachmentId);
   let store: ReturnType<typeof privateFileStore> | undefined;

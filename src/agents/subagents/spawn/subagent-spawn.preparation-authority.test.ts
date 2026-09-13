@@ -43,6 +43,7 @@ import {
 } from "../../tools/gateway-caller-context.js";
 import { createSessionsSpawnTool } from "../../tools/sessions-spawn-tool.js";
 import { subagentRuns } from "../registry/subagent-registry-memory.js";
+import { resolveSubagentAttachmentDir } from "../subagent-attachment-paths.js";
 import { enqueueSwarmRun } from "../swarm/swarm-scheduler.js";
 import {
   installSpawnAuthorityFixture,
@@ -267,11 +268,11 @@ describe("pending spawn preparation authority", () => {
           expect(
             await fs.readFile(
               path.join(
-                fixture.stateDir,
-                "attachments",
-                "subagents",
-                "main",
-                path.basename(details.attachments.relDir),
+                resolveSubagentAttachmentDir({
+                  agentId: "main",
+                  childSessionKey,
+                  attachmentId: path.basename(details.attachments.relDir),
+                }),
                 "synthetic.txt",
               ),
               "utf8",

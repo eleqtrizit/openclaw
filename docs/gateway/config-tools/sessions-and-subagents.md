@@ -96,7 +96,7 @@ Controls inline attachment support for `sessions_spawn`.
   <Accordion title="Attachment notes">
     - Attachments require `enabled: true`.
     - Subagent attachments are staged in Gateway-owned state with a `.manifest.json`; they are never written through the child workspace.
-    - Sandboxed children receive attachments read-only at `/openclaw/attachments/<uuid>/`. Shared-scope sandboxes and backends without read-only resource projection reject attachment-bearing spawns before staging.
+    - Sandboxed children receive only their session-owned attachments read-only at `/openclaw/attachments/<uuid>/`. Attachment-bearing agent-scoped sessions use a dedicated runtime so sibling guests cannot inherit the projection. Shared-scope sandboxes and backends without read-only resource projection reject attachment-bearing spawns before staging.
     - Unsandboxed children receive the absolute Gateway-owned path and can read it through workspace-scoped file/media tools.
     - ACP attachments are image-only and forwarded inline to the ACP runtime after the same file count, per-file byte, and total byte limits pass.
     - Attachment content is automatically redacted from transcript persistence.
