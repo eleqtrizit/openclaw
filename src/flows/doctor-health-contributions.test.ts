@@ -2293,6 +2293,10 @@ describe("doctor health contributions", () => {
         expect.stringContaining("openclaw gateway auth-token --show"),
         "Gateway auth",
       );
+      expect(mocks.note).toHaveBeenCalledWith(
+        expect.stringContaining("hot-applies to a running Gateway"),
+        "Gateway auth",
+      );
       expect(ctx.cfg.gateway?.auth?.token).toBe("generated-gateway-token");
     },
   );
