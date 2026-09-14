@@ -357,6 +357,9 @@ export async function materializeSubagentAttachments(params: {
     agentId: params.targetAgentId,
     childSessionKey: params.childSessionKey,
   });
+  // relDir is a retained identifier only. The Gateway-owned staging root is never
+  // workspace-relative, and the child prompt carries the usable sandbox mount or
+  // absolute Gateway path; consumers must not resolve relDir as a location.
   const relDir = path.posix.join(".openclaw", "attachments", attachmentId);
   const absDir = path.join(absRootDir, attachmentId);
   let store: ReturnType<typeof privateFileStore> | undefined;
