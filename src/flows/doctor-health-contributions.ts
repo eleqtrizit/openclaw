@@ -260,7 +260,14 @@ async function runGatewayAuthHealth(ctx: DoctorHealthFlowContext): Promise<void>
       },
     },
   };
-  note("Gateway token configured.", "Gateway auth");
+  const { formatCliCommand } = await loadCommandFormatModule();
+  note(
+    [
+      "Gateway token configured.",
+      `Restart the Gateway, then run ${formatCliCommand("openclaw gateway auth-token --show")} in an interactive terminal on the Gateway host to reveal it.`,
+    ].join("\n"),
+    "Gateway auth",
+  );
 }
 
 async function runLegacyStateHealth(ctx: DoctorHealthFlowContext): Promise<void> {
