@@ -16,13 +16,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: eleqtrizit/openclaw
-          ref: a61f020d983f5ccd37ebadc2f26c4973f60b21e1
+          ref: 5d24704f836cb74a893bcb71b5f8fdf02b7857ac
           persist-credentials: false
 
       - name: Verify candidate and native platform
         shell: bash
         env:
-          EXPECTED_SHA: a61f020d983f5ccd37ebadc2f26c4973f60b21e1
+          EXPECTED_SHA: 5d24704f836cb74a893bcb71b5f8fdf02b7857ac
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
