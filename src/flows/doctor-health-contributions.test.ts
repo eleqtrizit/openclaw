@@ -2294,7 +2294,11 @@ describe("doctor health contributions", () => {
         "Gateway auth",
       );
       expect(mocks.note).toHaveBeenCalledWith(
-        expect.stringContaining("hot-applies to a running Gateway"),
+        expect.stringContaining("hot-applies to the running Gateway"),
+        "Gateway auth",
+      );
+      expect(mocks.note).toHaveBeenCalledWith(
+        expect.stringContaining('gateway.reload.mode: "off"'),
         "Gateway auth",
       );
       expect(ctx.cfg.gateway?.auth?.token).toBe("generated-gateway-token");
