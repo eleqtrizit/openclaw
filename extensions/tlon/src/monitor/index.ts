@@ -932,8 +932,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
               requestingShip: ship,
               messagePreview: "(DM invite - no message yet)",
             });
-            await queueApprovalRequest(approval);
-            processedDmInvites.add(ship);
+            processedDmInvites.addIfAccepted(ship, await queueApprovalRequest(approval));
           }
         }
         return;
@@ -1225,7 +1224,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
     // Subscribe to foreigns for auto-accepting group invites
     // Always subscribe so we can hot-reload the setting via settings store
     {
-      const processedGroupInvites = new Set<string>();
+      const processedGroupInvites = createActiveSnapshotTracker();
 
       const processPendingInvites = async (foreigns: Foreigns, propagateWriteFailures = false) => {
         if (!foreigns || typeof foreigns !== "object") {
@@ -1287,8 +1286,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
               requestingShip: inviterShip,
               groupFlag,
             });
-            await queueApprovalRequest(approval);
-            processedGroupInvites.add(groupFlag);
+            processedGroupInvites.addIfAccepted(groupFlag, await queueApprovalRequest(approval));
             continue;
           }
 

@@ -1,6 +1,11 @@
 import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
-import { putTlonSetting, type PendingApproval, type TlonSettingsStore } from "../settings.js";
+import {
+  putTlonSetting,
+  TLON_PENDING_APPROVAL_LIMIT,
+  type PendingApproval,
+  type TlonSettingsStore,
+} from "../settings.js";
 import { normalizeShip } from "../targets.js";
 import { sendDm } from "../urbit/send.js";
 import type { UrbitSSEClient } from "../urbit/sse-client.js";
@@ -47,6 +52,9 @@ export function createTlonApprovalRuntime(params: {
     processApprovedMessage,
     refreshWatchedChannels,
   } = params;
+
+  let approvalOverflowNoticeSent = false;
+  let approvalOverflowNoticeAttempts = 0;
 
   const savePendingApprovals = async (required = false): Promise<void> => {
     try {
@@ -151,11 +159,11 @@ export function createTlonApprovalRuntime(params: {
     }
   };
 
-  const sendOwnerNotification = async (message: string): Promise<void> => {
+  const sendOwnerNotification = async (message: string): Promise<boolean> => {
     const ownerShip = getEffectiveOwnerShip();
     if (!ownerShip) {
       runtime.log?.("[tlon] No ownerShip configured, cannot send notification");
-      return;
+      return false;
     }
     try {
       await sendDm({
@@ -165,15 +173,17 @@ export function createTlonApprovalRuntime(params: {
         text: message,
       });
       runtime.log?.(`[tlon] Sent notification to owner ${ownerShip}`);
+      return true;
     } catch (err) {
       runtime.error?.(`[tlon] Failed to send notification to owner: ${String(err)}`);
+      return false;
     }
   };
 
-  const queueApprovalRequest = async (approval: PendingApproval): Promise<void> => {
+  const queueApprovalRequest = async (approval: PendingApproval): Promise<boolean> => {
     if (await isShipBlocked(approval.requestingShip)) {
       runtime.log?.(`[tlon] Ignoring request from blocked ship ${approval.requestingShip}`);
-      return;
+      return false;
     }
 
     const approvals = getPendingApprovals();
@@ -196,15 +206,31 @@ export function createTlonApprovalRuntime(params: {
       );
       await savePendingApprovals(true);
       await sendOwnerNotification(formatApprovalRequest(existing));
-      return;
+      return true;
     }
 
+    if (approvals.length >= TLON_PENDING_APPROVAL_LIMIT) {
+      runtime.log?.(
+        `[tlon] Pending approval limit reached; ignoring ${approval.type} request from ${approval.requestingShip}`,
+      );
+      if (!approvalOverflowNoticeSent && approvalOverflowNoticeAttempts < 3) {
+        approvalOverflowNoticeAttempts += 1;
+        approvalOverflowNoticeSent = await sendOwnerNotification(
+          `Pending approval queue is full (${approvals.length}). Resolve existing requests with approve, deny, or block before asking rejected requesters to retry.`,
+        );
+      }
+      return false;
+    }
+
+    approvalOverflowNoticeSent = false;
+    approvalOverflowNoticeAttempts = 0;
     setPendingApprovals([...approvals, approval]);
     await savePendingApprovals(true);
     await sendOwnerNotification(formatApprovalRequest(approval));
     runtime.log?.(
       `[tlon] Queued approval request: ${approval.id} (${approval.type} from ${approval.requestingShip})`,
     );
+    return true;
   };
 
   const handleApprovalResponse = async (text: string): Promise<boolean> => {
