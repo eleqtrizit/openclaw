@@ -121,6 +121,7 @@ describe("embedded run session permissions", () => {
       const pluginHarnessRunParams = createPluginHarnessRunParams(state);
       let applied: Promise<boolean> | undefined;
       const acknowledged = vi.fn();
+      const onPermissionModeApplied = vi.fn();
       let owner: object | undefined;
       mockedRunEmbeddedAttempt.mockImplementationOnce(async (attempt) => {
         expect(attempt.permissionChange).toBeDefined();
@@ -152,10 +153,12 @@ describe("embedded run session permissions", () => {
         ...pluginHarnessRunParams,
         permissionMode: before,
         execOverrides: { mode: "ask" },
+        onPermissionModeApplied,
         runId: `run-live-permissions-${before}-${after}`,
       });
 
       await expect(applied).resolves.toBe(true);
+      expect(onPermissionModeApplied).toHaveBeenCalledExactlyOnceWith(after);
       expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
     },
   );

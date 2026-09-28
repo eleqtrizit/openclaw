@@ -49,7 +49,10 @@ function createContext(): FinalizeReplyAgentRunInput {
     pendingToolTasks: new Set(),
     preflightCompactionApplied: false,
     queueKey: sessionKey,
-    replyMediaContext: { normalizePayload: async (payload) => payload },
+    replyMediaContext: {
+      normalizePayload: async (payload) => payload,
+      updateSessionPermissionMode: () => {},
+    },
     replyOperation: createMockReplyOperation().replyOperation,
     replyRouteThreadId: undefined,
     replyToChannel: "discord",

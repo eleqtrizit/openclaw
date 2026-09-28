@@ -52,6 +52,7 @@ export type AgentFallbackCandidateCommonParams = {
   currentTurnImages: Awaited<
     ReturnType<typeof import("./current-turn-images.js").resolveCurrentTurnImages>
   >;
+  onPermissionModeApplied: NonNullable<RunEmbeddedAgentParams["onPermissionModeApplied"]>;
   signalExecutionPhaseForTyping: NonNullable<RunEmbeddedAgentParams["onExecutionPhase"]>;
   notifyAgentRunStart: () => void;
   preserveProgressCallbackStartOrder: boolean;
@@ -114,6 +115,7 @@ export type AgentFallbackCycleParams = {
   currentTurnImages: Awaited<
     ReturnType<typeof import("./current-turn-images.js").resolveCurrentTurnImages>
   >;
+  onPermissionModeApplied: NonNullable<RunEmbeddedAgentParams["onPermissionModeApplied"]>;
   state: AgentFallbackCycleState;
   presentation: ReturnType<typeof createAgentTurnPresentation>;
   directBlockDeliveries: DirectBlockDelivery[];

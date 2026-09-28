@@ -14,17 +14,91 @@ import {
   cleanupAgentRunnerMediaTestState,
 } from "./agent-runner.media-paths.test-harness.js";
 
+type MediaOwnerCase = {
+  label: string;
+  sessionKey: string;
+  provider: string;
+  gateway: boolean;
+  permissionMode?: "workspace" | "full";
+  appliedPermissionMode?: "workspace";
+  configWorkspaceOnly?: boolean;
+  expectedMedia: number;
+};
+
 describe("runReplyAgent media delivery ownership", () => {
   beforeEach(resetAgentRunnerMediaTestState);
   afterEach(cleanupAgentRunnerMediaTestState);
 
   it.each([
-    { sessionKey: "agent:qa:main", provider: "webchat", gateway: true },
-    { sessionKey: "global", provider: "slack", gateway: true },
-    { sessionKey: "global", provider: "slack", gateway: false },
-  ])(
-    "keeps $sessionKey media with its prepared delivery owner (gateway=$gateway, provider=$provider)",
-    async ({ sessionKey, provider, gateway }) => {
+    {
+      label: "gateway workspace",
+      sessionKey: "agent:qa:main",
+      provider: "webchat",
+      gateway: true,
+      permissionMode: "workspace" as const,
+      expectedMedia: 1,
+    },
+    {
+      label: "routed gateway workspace",
+      sessionKey: "global",
+      provider: "slack",
+      gateway: true,
+      permissionMode: "workspace" as const,
+      expectedMedia: 1,
+    },
+    {
+      label: "runner workspace",
+      sessionKey: "global",
+      provider: "slack",
+      gateway: false,
+      permissionMode: "workspace" as const,
+      expectedMedia: 1,
+    },
+    {
+      label: "runner full",
+      sessionKey: "global",
+      provider: "slack",
+      gateway: false,
+      permissionMode: "full" as const,
+      expectedMedia: 2,
+    },
+    {
+      label: "runner unset",
+      sessionKey: "global",
+      provider: "slack",
+      gateway: false,
+      permissionMode: undefined,
+      expectedMedia: 2,
+    },
+    {
+      label: "runner full with stricter config",
+      sessionKey: "global",
+      provider: "slack",
+      gateway: false,
+      permissionMode: "full" as const,
+      configWorkspaceOnly: true,
+      expectedMedia: 1,
+    },
+    {
+      label: "runner full changed to workspace",
+      sessionKey: "global",
+      provider: "slack",
+      gateway: false,
+      permissionMode: "full" as const,
+      appliedPermissionMode: "workspace" as const,
+      expectedMedia: 1,
+    },
+  ] satisfies MediaOwnerCase[])(
+    "keeps $label media with its prepared delivery owner",
+    async ({
+      sessionKey,
+      provider,
+      gateway,
+      permissionMode,
+      appliedPermissionMode,
+      configWorkspaceOnly,
+      expectedMedia,
+    }) => {
       const { normalizeWebchatReplyMediaPathsForDisplay } =
         await import("../../gateway/server-methods/chat-reply-media.js");
       const { drainGlobalSingletonLifecycleState } =
@@ -49,7 +123,10 @@ describe("runReplyAgent media delivery ownership", () => {
               await writeFile(file, bytes);
             }
             const config: OpenClawConfig = {
-              tools: { allow: ["read"] },
+              tools: {
+                allow: ["read"],
+                ...(configWorkspaceOnly ? { fs: { workspaceOnly: true } } : {}),
+              },
               agents: {
                 ownership: "explicit",
                 entries: { qa: { workspace: state.workspaceDir }, beta: {} },
@@ -62,13 +139,20 @@ describe("runReplyAgent media delivery ownership", () => {
             resolveOutboundAttachmentFromUrlMock.mockImplementation(
               actual.resolveOutboundAttachmentFromUrl,
             );
-            runEmbeddedAgentMock.mockResolvedValue({
-              payloads: [
-                {
-                  text: `here are the charts\n${sources.map((file) => `MEDIA:${file}`).join("\n")}`,
+            runEmbeddedAgentMock.mockImplementation(async (params) => {
+              if (appliedPermissionMode) {
+                params.onPermissionModeApplied?.(appliedPermissionMode);
+              }
+              return {
+                payloads: [
+                  {
+                    text: `here are the charts\n${sources.map((file) => `MEDIA:${file}`).join("\n")}`,
+                  },
+                ],
+                meta: {
+                  agentMeta: { sessionId: "session", provider: "anthropic", model: "claude" },
                 },
-              ],
-              meta: { agentMeta: { sessionId: "session", provider: "anthropic", model: "claude" } },
+              };
             });
             const result = await runReplyAgent(
               makeRunReplyAgentParams({
@@ -80,7 +164,7 @@ describe("runReplyAgent media delivery ownership", () => {
                     sessionKey,
                     messageProvider: provider,
                     workspaceDir: selected,
-                    permissionMode: "workspace",
+                    permissionMode,
                     sessionRoot: selected,
                     config,
                     mediaNormalizationOwner: gateway ? "gateway" : undefined,
@@ -109,10 +193,13 @@ describe("runReplyAgent media delivery ownership", () => {
               expect(display?.text).toContain("outside.png: Delivery failed.");
               expect(await readFile(display!.mediaUrls![0]!)).toEqual(bytes);
             } else {
-              expect(result.mediaUrls).toHaveLength(2);
+              expect(result.mediaUrls).toHaveLength(expectedMedia);
               expect(result.mediaUrls).not.toEqual(sources);
               for (const file of result.mediaUrls ?? []) {
                 expect(await readFile(file)).toEqual(bytes);
+              }
+              if (expectedMedia === 1) {
+                expect(result.text).toContain("outside.png: Delivery failed.");
               }
             }
             expect(runEmbeddedAgentMock).toHaveBeenCalledOnce();

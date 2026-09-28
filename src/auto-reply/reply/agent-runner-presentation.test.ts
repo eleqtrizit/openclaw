@@ -83,6 +83,7 @@ function createPresentation(
     turn,
     replyMediaContext: {
       normalizePayload: options.normalizeMediaPaths ?? (async (payload) => payload),
+      updateSessionPermissionMode: () => {},
     },
     directBlockDeliveries: [],
     heartbeatState: { didLogStrip: false },

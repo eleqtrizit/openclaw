@@ -90,4 +90,49 @@ describe("reply media delivery ownership", () => {
       }
     },
   );
+
+  it("uses the current restricted session policy for delivery-stage media", async () => {
+    setNoAbort();
+    installThreadingTestPlugin({ id: "imessage" });
+    const dispatcher = createDispatcher();
+    const sessionRoot = "/workspace/restricted-session";
+    sessionStoreMocks.currentEntry = {
+      sessionId: "media-policy",
+      updatedAt: 1,
+      permissionMode: "full",
+      sessionRoot,
+    };
+    replyMediaPathMocks.createReplyMediaPathNormalizer.mockReturnValue(
+      async (payload: ReplyPayload) => payload,
+    );
+    const ctx = buildTestCtx({
+      SessionKey: "agent:main:media-policy",
+      Provider: "webchat",
+      Surface: "webchat",
+      OriginatingChannel: "imessage",
+      OriginatingTo: "imessage:+15550001111",
+      ExplicitDeliverRoute: true,
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver: async () => {
+        sessionStoreMocks.currentEntry = {
+          ...sessionStoreMocks.currentEntry,
+          permissionMode: "workspace",
+        };
+        return { text: "updated", mediaUrls: ["/outside/report.pdf"] };
+      },
+      replyOptions: { mediaNormalizationOwner: "gateway" },
+    });
+
+    expect(replyMediaPathMocks.createReplyMediaPathNormalizer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionWorkspaceDir: sessionRoot,
+        workspaceOnly: true,
+      }),
+    );
+  });
 });

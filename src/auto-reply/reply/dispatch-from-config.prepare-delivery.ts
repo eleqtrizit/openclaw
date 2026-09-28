@@ -9,7 +9,10 @@ import {
   setReplyPayloadMetadata,
   type ReplyPayload,
 } from "../reply-payload.js";
-import { resolveRoutedPolicyConversationType } from "./dispatch-from-config.context.js";
+import {
+  resolveRoutedPolicyConversationType,
+  resolveSessionStoreLookup,
+} from "./dispatch-from-config.context.js";
 import type { PluginBindingTranscriptOwner } from "./dispatch-from-config.events.js";
 import type { GatherDispatchRequestReadyState } from "./dispatch-from-config.gather.js";
 import { hasAskUserPayload } from "./dispatch-from-config.payloads.js";
@@ -108,16 +111,36 @@ export async function prepareDispatchDelivery(state: GatherDispatchRequestReadyS
         (typeof import("./reply-media-paths.runtime.js"))["createReplyMediaPathNormalizer"]
       >
     | undefined;
+  let replyMediaPermissionMode = sessionStoreEntry.entry?.permissionMode;
+  let replyMediaSessionRoot = sessionStoreEntry.entry?.sessionRoot;
   const getNormalizeReplyMediaPaths = async () => {
-    if (normalizeReplyMediaPaths) {
+    const currentEntry =
+      resolveSessionStoreLookup(
+        sessionStoreEntry.sessionKey ? { ...ctx, SessionKey: sessionStoreEntry.sessionKey } : ctx,
+        cfg,
+      ).entry ?? sessionStoreEntry.entry;
+    const currentPermissionMode = currentEntry?.permissionMode;
+    const currentSessionRoot = currentEntry?.sessionRoot;
+    if (
+      normalizeReplyMediaPaths &&
+      currentPermissionMode === replyMediaPermissionMode &&
+      currentSessionRoot === replyMediaSessionRoot
+    ) {
       return normalizeReplyMediaPaths;
     }
     const { createReplyMediaPathNormalizer } = await loadReplyMediaPathsRuntime();
+    replyMediaPermissionMode = currentPermissionMode;
+    replyMediaSessionRoot = currentSessionRoot;
     normalizeReplyMediaPaths = createReplyMediaPathNormalizer({
       cfg,
       agentId: state.sessionAgentId,
       sessionKey: state.acpDispatchSessionKey,
       workspaceDir: state.workspaceDir,
+      sessionWorkspaceDir:
+        currentPermissionMode && currentPermissionMode !== "full"
+          ? (currentSessionRoot ?? state.workspaceDir)
+          : undefined,
+      workspaceOnly: currentPermissionMode && currentPermissionMode !== "full" ? true : undefined,
       messageProvider: deliveryChannel,
       accountId: replyContextAccountId,
       groupId,

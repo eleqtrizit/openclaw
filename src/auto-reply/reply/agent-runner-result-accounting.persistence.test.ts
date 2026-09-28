@@ -162,7 +162,10 @@ async function createFixture() {
     pendingToolTasks: new Set(),
     preflightCompactionApplied: false,
     queueKey: sessionKey,
-    replyMediaContext: { normalizePayload: async (payload) => payload },
+    replyMediaContext: {
+      normalizePayload: async (payload) => payload,
+      updateSessionPermissionMode: () => {},
+    },
     replyOperation,
     replyRouteThreadId: undefined,
     replyToChannel: undefined,

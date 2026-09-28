@@ -370,6 +370,7 @@ describe("runReplyAgent media path normalization", () => {
       resolvedVerboseLevel: "off",
       replyMediaContext: {
         normalizePayload: async (payload) => payload,
+        updateSessionPermissionMode: () => {},
       },
       ...overrides,
     });
@@ -401,6 +402,8 @@ describe("runReplyAgent media path normalization", () => {
           model: "claude",
           thinkingCatalog: [{ provider: "anthropic", id: "claude", input: ["text"] }],
           workspaceDir: testWorkspaceDir,
+          permissionMode: "workspace",
+          sessionRoot: testWorkspaceDir,
           config: { agents: { ownership: "explicit", entries: { qa: {}, beta: {} } } },
         },
       });
@@ -422,6 +425,7 @@ describe("runReplyAgent media path normalization", () => {
           replyMediaContext: providedContext
             ? {
                 normalizePayload: async (payload) => payload,
+                updateSessionPermissionMode: () => {},
               }
             : undefined,
         },
@@ -434,7 +438,12 @@ describe("runReplyAgent media path normalization", () => {
       } else {
         expect(createReplyMediaContextRuntimeMock).toHaveBeenCalledOnce();
         expect(createReplyMediaContextRuntimeMock).toHaveBeenCalledWith(
-          expect.objectContaining({ cfg: followupRun.run.config, sessionKey: "global" }),
+          expect.objectContaining({
+            cfg: followupRun.run.config,
+            permissionMode: followupRun.run.permissionMode,
+            sessionKey: "global",
+            sessionRoot: followupRun.run.sessionRoot,
+          }),
         );
       }
       expect(result.outcome).toMatchObject({ kind: "settled", status: "ok" });

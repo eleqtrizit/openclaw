@@ -20,6 +20,7 @@ import {
 } from "../../agents/sandbox-paths.js";
 import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox.js";
 import type { SandboxWorkspaceAccess } from "../../agents/sandbox/types.js";
+import type { SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { FsSafeError } from "../../infra/fs-safe.js";
@@ -504,17 +505,33 @@ export function createReplyMediaPathNormalizer(
 
 export type ReplyMediaContext = {
   normalizePayload: (payload: ReplyPayload) => Promise<ReplyPayload>;
+  updateSessionPermissionMode: (mode: SessionEntry["permissionMode"] | null) => void;
 };
 
 export function createReplyMediaContext(
   params: Parameters<typeof createReplyMediaPathNormalizer>[0] & {
     mediaNormalizationOwner?: "gateway";
+    permissionMode?: SessionEntry["permissionMode"];
+    sessionRoot?: string;
   },
 ): ReplyMediaContext {
+  const createNormalizer = (mode: SessionEntry["permissionMode"] | undefined) =>
+    createReplyMediaPathNormalizer({
+      ...params,
+      sessionWorkspaceDir:
+        mode && mode !== "full" ? (params.sessionRoot ?? params.workspaceDir) : undefined,
+      // Leave full/unset sessions undefined so stricter config remains authoritative.
+      workspaceOnly: mode && mode !== "full" ? true : undefined,
+    });
+  let normalizePayload = createNormalizer(params.permissionMode);
   return {
-    normalizePayload:
+    normalizePayload: (payload) =>
       params.mediaNormalizationOwner === "gateway"
-        ? async (payload) => payload
-        : createReplyMediaPathNormalizer(params),
+        ? Promise.resolve(payload)
+        : normalizePayload(payload),
+    updateSessionPermissionMode: (mode) => {
+      // Rebuild the preparer so a narrower mode cannot reuse media staged under broader authority.
+      normalizePayload = createNormalizer(mode ?? undefined);
+    },
   };
 }

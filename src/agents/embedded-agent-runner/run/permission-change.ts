@@ -38,7 +38,10 @@ export function withAuthorizedPermissionChange<T>(
 
 /** Owns apply acknowledgements across replacement attempts within one admitted run. */
 export function createEmbeddedRunPermissionChanges(
-  params: Pick<RunEmbeddedAgentParams, "execOverrides" | "permissionMode">,
+  params: Pick<
+    RunEmbeddedAgentParams,
+    "execOverrides" | "onPermissionModeApplied" | "permissionMode"
+  >,
 ) {
   const owner = Object.freeze({});
   const authority: PermissionChangeAuthority = {};
@@ -70,6 +73,7 @@ export function createEmbeddedRunPermissionChanges(
     params.execOverrides.mode = mode
       ? resolveSessionPermissionExecMode({ mode })
       : baseExecOverrides.mode;
+    params.onPermissionModeApplied?.(mode);
   };
   const request: NonNullable<EmbeddedRunAttemptParams["permissionChange"]>["request"] = (mode) => {
     assertAuthorized(mode);

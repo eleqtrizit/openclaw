@@ -150,6 +150,8 @@ export type RunEmbeddedAgentParams = {
   requireWritableSandbox?: true;
   permissionMode?: SessionEntry["permissionMode"];
   sessionRoot?: string;
+  /** Publishes an acknowledged live permission change to caller-owned non-tool readers. */
+  onPermissionModeApplied?: (mode: SessionEntry["permissionMode"] | null) => void;
   /** Context supplied by internal producers, separate from inbound prompt text. */
   runtimeContextFragments?: import("../../internal-runtime-context.js").RuntimeContextFragment[];
   /** Finalizes caller-owned guidance after the submitted tool surface is known. */

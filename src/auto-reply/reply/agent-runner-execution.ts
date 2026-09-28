@@ -180,6 +180,8 @@ async function executeAgentTurnInternalLoop(
           agentId: params.followupRun.run.agentId,
           sessionKey: params.sessionKey,
           workspaceDir: params.followupRun.run.workspaceDir,
+          permissionMode: params.followupRun.run.permissionMode,
+          sessionRoot: params.followupRun.run.sessionRoot,
           mediaNormalizationOwner: params.followupRun.run.mediaNormalizationOwner,
           messageProvider: params.followupRun.run.messageProvider,
           accountId:
@@ -321,6 +323,7 @@ async function executeAgentTurnInternalLoop(
         runId,
         runAbortSignal: fallbackCycleState.deferredLifecycle.signal,
         currentTurnImages,
+        onPermissionModeApplied: (mode) => replyMediaContext.updateSessionPermissionMode(mode),
         state: fallbackCycleState,
         presentation,
         directBlockDeliveries,
