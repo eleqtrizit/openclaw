@@ -96,6 +96,8 @@ export type MessageActionInput = {
   preparedMessageId?: string;
   /** @internal The Gateway owns this call and may use its active gateway-mode adapter directly. */
   gatewayOwnedDelivery?: boolean;
+  /** @internal Retry a proven pre-dispatch local ownership refusal through the Gateway. */
+  forceGatewayAction?: boolean;
   /** @internal Bypass provider-native action dispatch so core durable delivery owns the send. */
   forceCoreDelivery?: boolean;
   /** @internal Fail before platform I/O unless the core delivery queue persisted the intent. */

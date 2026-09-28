@@ -22,6 +22,7 @@ import {
   writeMatrixIdbSnapshotJson,
   type MatrixIdbSnapshotRecord,
 } from "../crypto-state-store.js";
+import { acquireMatrixCryptoStoreOwnership } from "./crypto-store-ownership.js";
 import { persistIdbToDisk, restoreIdbFromDisk } from "./idb-persistence.js";
 import {
   clearAllIndexedDbState,
@@ -59,6 +60,22 @@ describe("Matrix IndexedDB persistence", () => {
     resetFileLockStateForTest();
     resetPluginStateStoreForTests();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("holds exclusive crypto-store ownership until release", async () => {
+    const snapshotPath = path.join(tmpDir, "crypto-idb-snapshot.json");
+    const first = await acquireMatrixCryptoStoreOwnership(snapshotPath);
+    try {
+      await expect(acquireMatrixCryptoStoreOwnership(snapshotPath)).rejects.toMatchObject({
+        code: "matrix_crypto_store_owner_active",
+        retryViaGateway: true,
+      });
+    } finally {
+      await first.release();
+    }
+
+    const replacement = await acquireMatrixCryptoStoreOwnership(snapshotPath);
+    await replacement.release();
   });
 
   it("persists and restores database contents for the selected prefix", async () => {

@@ -32,6 +32,7 @@ type RunMessageActionParams = {
     clientName?: string;
     mode?: string;
   };
+  forceGatewayAction?: boolean;
 };
 
 function readOnlyMessageActionCall(): RunMessageActionParams {
@@ -754,6 +755,34 @@ describe("messageCommand", () => {
     });
     expect(json.payload).toEqual(payload);
     expect(json).not.toHaveProperty("deliveryStatus");
+  });
+
+  it("retries a proven local ownership refusal through the Gateway", async () => {
+    const ownershipError = Object.assign(new Error("Matrix crypto owner active"), {
+      retryViaGateway: true,
+    });
+    runMessageActionMock.mockRejectedValueOnce(ownershipError);
+
+    await runMessageCommand({ channel: "matrix" });
+
+    expect(runMessageActionMock).toHaveBeenCalledTimes(2);
+    expect(runMessageActionMock.mock.calls[0]?.[0]).not.toHaveProperty("forceGatewayAction");
+    expect(runMessageActionMock.mock.calls[1]?.[0]).toMatchObject({
+      forceGatewayAction: true,
+      gateway: { clientName: "cli", mode: "cli" },
+    });
+  });
+
+  it("does not retry ownership refusals during dry runs", async () => {
+    const ownershipError = Object.assign(new Error("Matrix crypto owner active"), {
+      retryViaGateway: true,
+    });
+    runMessageActionMock.mockRejectedValueOnce(ownershipError);
+
+    await expect(runMessageCommand({ channel: "matrix", dryRun: true })).rejects.toBe(
+      ownershipError,
+    );
+    expect(runMessageActionMock).toHaveBeenCalledOnce();
   });
 
   it("rejects unknown message actions before dispatch", async () => {

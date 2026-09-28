@@ -288,8 +288,9 @@ export async function executeGatewayAction(
   if (!channelPlugin?.actions?.handleAction && !supportsCanonicalGatewayDelivery) {
     return null;
   }
-  const executionMode =
-    channelPlugin.actions?.resolveExecutionMode?.({ action: params.action }) ?? "local";
+  const executionMode = ctx.input.forceGatewayAction
+    ? "gateway"
+    : (channelPlugin.actions?.resolveExecutionMode?.({ action: params.action }) ?? "local");
   if (executionMode !== "gateway" && !supportsCanonicalGatewayDelivery) {
     return null;
   }

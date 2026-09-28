@@ -28,6 +28,8 @@ import {
 import { quiesceMatrixClientSync } from "./client-sync-quiesce.js";
 import { waitForMatrixInitialSyncReady } from "./client-sync-ready.js";
 import type { MatrixCryptoFacade } from "./crypto-facade.js";
+import { acquireMatrixCryptoStoreOwnership } from "./crypto-store-ownership.js";
+import type { MatrixCryptoStoreOwnership } from "./crypto-store-ownership.js";
 import type { MatrixDecryptBridge } from "./decrypt-bridge.js";
 import { matrixEventToRaw } from "./event-helpers.js";
 import { MatrixAuthedHttpClient } from "./http-client.js";
@@ -122,6 +124,7 @@ export abstract class MatrixClientBase {
   private stopDiscardPromise: Promise<void> | null = null;
   private idbPersistPromise: Promise<void> | null = null;
   private idbPersistAbortController: AbortController | null = null;
+  private cryptoStoreOwnership: MatrixCryptoStoreOwnership | null = null;
 
   private readonly assertClientActive = () => {
     this.requestAbortController.signal.throwIfAborted();
@@ -538,6 +541,28 @@ export abstract class MatrixClientBase {
       .catch(noop);
   }
 
+  private async releaseCryptoStoreOwnership(): Promise<void> {
+    const ownership = this.cryptoStoreOwnership;
+    this.cryptoStoreOwnership = null;
+    await ownership?.release();
+  }
+
+  private async closeCryptoStores(): Promise<void> {
+    const [recoveryClose, ownershipRelease] = await Promise.allSettled([
+      this.recoveryKeyStore.close(),
+      this.releaseCryptoStoreOwnership(),
+    ]);
+    const closeErrors = [recoveryClose, ownershipRelease]
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+    if (closeErrors.length > 1) {
+      throw new AggregateError(closeErrors, "Failed to close Matrix crypto stores");
+    }
+    if (closeErrors.length === 1) {
+      throw closeErrors[0];
+    }
+  }
+
   private async stopClientGeneration(persist: boolean): Promise<void> {
     try {
       if (persist) {
@@ -574,7 +599,7 @@ export abstract class MatrixClientBase {
         await this.syncStore?.flush();
       }
     } finally {
-      await this.recoveryKeyStore.close();
+      await this.closeCryptoStores();
     }
   }
 
@@ -676,50 +701,63 @@ export abstract class MatrixClientBase {
   private async initializeCrypto(abortSignal: AbortSignal): Promise<void> {
     throwIfMatrixStartupAborted(abortSignal);
     const { persistIdbToDisk, restoreIdbFromDisk } = await loadMatrixCryptoRuntime();
-
-    // Restore persisted IndexedDB crypto store before initializing WASM crypto.
-    await restoreIdbFromDisk(this.idbSnapshotPath, this.stateRuntime);
-    throwIfMatrixStartupAborted(abortSignal);
+    if (this.idbSnapshotPath && !this.cryptoStoreOwnership) {
+      this.cryptoStoreOwnership = await acquireMatrixCryptoStoreOwnership(this.idbSnapshotPath);
+    }
 
     try {
-      await this.client.initRustCrypto({
-        cryptoDatabasePrefix: this.cryptoDatabasePrefix,
-      });
-      this.cryptoInitialized = true;
+      // Restore persisted IndexedDB crypto store before initializing WASM crypto.
+      await restoreIdbFromDisk(this.idbSnapshotPath, this.stateRuntime);
       throwIfMatrixStartupAborted(abortSignal);
 
-      // Persist the crypto store after successful init (captures fresh keys on first run).
-      await persistIdbToDisk({
-        snapshotPath: this.idbSnapshotPath,
-        databasePrefix: this.cryptoDatabasePrefix,
-        abortSignal,
-        stateRuntime: this.stateRuntime,
-      });
-      throwIfMatrixStartupAborted(abortSignal);
+      try {
+        await this.client.initRustCrypto({
+          cryptoDatabasePrefix: this.cryptoDatabasePrefix,
+        });
+        this.cryptoInitialized = true;
+        throwIfMatrixStartupAborted(abortSignal);
 
-      // Periodically persist to capture new Olm sessions and room keys.
-      this.idbPersistTimer = setInterval(() => {
-        if (this.idbPersistPromise) {
-          return;
-        }
-        const abortController = new AbortController();
-        this.idbPersistAbortController = abortController;
-        this.idbPersistPromise = persistIdbToDisk({
+        // Persist the crypto store after successful init (captures fresh keys on first run).
+        await persistIdbToDisk({
           snapshotPath: this.idbSnapshotPath,
           databasePrefix: this.cryptoDatabasePrefix,
-          abortSignal: abortController.signal,
+          abortSignal,
           stateRuntime: this.stateRuntime,
-        })
-          .catch(noop)
-          .finally(() => {
-            this.idbPersistPromise = null;
-            this.idbPersistAbortController = null;
-          });
-      }, MATRIX_IDB_PERSIST_INTERVAL_MS);
-      this.idbPersistTimer.unref?.();
-    } catch (err) {
-      throwIfMatrixStartupAborted(abortSignal);
-      LogService.warn("MatrixClientLite", "Failed to initialize rust crypto:", err);
+        });
+        throwIfMatrixStartupAborted(abortSignal);
+
+        // Periodically persist to capture new Olm sessions and room keys.
+        this.idbPersistTimer = setInterval(() => {
+          if (this.idbPersistPromise) {
+            return;
+          }
+          const abortController = new AbortController();
+          this.idbPersistAbortController = abortController;
+          this.idbPersistPromise = persistIdbToDisk({
+            snapshotPath: this.idbSnapshotPath,
+            databasePrefix: this.cryptoDatabasePrefix,
+            abortSignal: abortController.signal,
+            stateRuntime: this.stateRuntime,
+          })
+            .catch(noop)
+            .finally(() => {
+              this.idbPersistPromise = null;
+              this.idbPersistAbortController = null;
+            });
+        }, MATRIX_IDB_PERSIST_INTERVAL_MS);
+        this.idbPersistTimer.unref?.();
+      } catch (err) {
+        throwIfMatrixStartupAborted(abortSignal);
+        LogService.warn("MatrixClientLite", "Failed to initialize rust crypto:", err);
+      }
+    } catch (error) {
+      if (!this.cryptoInitialized) {
+        await this.releaseCryptoStoreOwnership();
+      }
+      throw error;
+    }
+    if (!this.cryptoInitialized) {
+      await this.releaseCryptoStoreOwnership();
     }
   }
 }

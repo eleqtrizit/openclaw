@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { ClientEvent, type MatrixClient as MatrixJsClient } from "matrix-js-sdk/lib/matrix.js";
 import { SyncState } from "matrix-js-sdk/lib/sync.js";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
@@ -13,6 +16,10 @@ const fixture = vi.hoisted(() => ({
 }));
 vi.mock("./joined-room-encryption.js", () => ({
   reconcileJoinedRoomEncryption: fixture.reconcile,
+}));
+vi.mock("./idb-persistence.js", () => ({
+  persistIdbToDisk: vi.fn(async () => undefined),
+  restoreIdbFromDisk: vi.fn(async () => false),
 }));
 vi.mock("matrix-js-sdk/lib/matrix.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("matrix-js-sdk/lib/matrix.js")>();
@@ -114,6 +121,47 @@ describe("Matrix encrypted startup ownership", () => {
       }
     },
   );
+
+  it("retains crypto-store ownership after a post-initialization abort", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "matrix-crypto-owner-"));
+    const snapshotPath = path.join(tempDir, "crypto-idb-snapshot.json");
+    const started = createDeferred<void>();
+    const finish = createDeferred<void>();
+    fixture.init.mockImplementation(async () => {
+      started.resolve();
+      await finish.promise;
+    });
+    const options = {
+      userId: "@bot:example.org",
+      deviceId: "BOT",
+      encryption: true,
+      autoBootstrapCrypto: false,
+      cryptoDatabasePrefix: "openclaw-matrix-owner-test",
+      idbSnapshotPath: snapshotPath,
+    };
+    const owner = new MatrixClient("https://matrix.example.org", "test-token", options);
+    const replacement = new MatrixClient("https://matrix.example.org", "test-token", options);
+    const abort = new AbortController();
+    const startup = owner.start({ abortSignal: abort.signal });
+
+    try {
+      await started.promise;
+      abort.abort();
+      finish.resolve();
+      await expect(startup).rejects.toMatchObject({ name: "AbortError" });
+      await expect(replacement.prepareForOneOff()).rejects.toMatchObject({
+        code: "matrix_crypto_store_owner_active",
+        retryViaGateway: true,
+      });
+      await owner.stopWithoutPersist();
+      await expect(replacement.prepareForOneOff()).resolves.toBeUndefined();
+    } finally {
+      finish.resolve();
+      await startup.catch(() => undefined);
+      await Promise.allSettled([owner.stopWithoutPersist(), replacement.stopWithoutPersist()]);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 
   it("bounds Rust initialization without tearing down its still-owned backend", async () => {
     vi.useFakeTimers();
