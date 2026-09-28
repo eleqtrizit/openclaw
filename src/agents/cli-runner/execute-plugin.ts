@@ -24,12 +24,16 @@ import {
 import type { CliTerminalInterruption } from "../cli-output-contracts.js";
 import { resolveExecDefaults } from "../exec-defaults.js";
 import { FailoverError, isSignalTimeoutReason } from "../failover-error.js";
+import { resolvePluginHarnessToolPolicies } from "../harness/execution-environment.js";
 import { withAgentQuestionAnswerAuthority } from "../harness/host-private-capabilities.js";
 import { runStructuredInput } from "../harness/structured-input-execution.js";
 import { compileStructuredInputQuestions } from "../harness/structured-input.js";
 import { resolveExecToolConfig } from "../lazy-exec-tool.js";
 import { recordAgentCleanupFailure } from "../run-cleanup-timeout.js";
+import { assertSandboxPath } from "../sandbox-paths.js";
+import { resolveEffectiveToolFsWorkspaceOnly } from "../tool-fs-policy.js";
 import { resolveToolLoopDetectionConfig } from "../tool-loop-detection-config.js";
+import { isToolAllowedByPolicies } from "../tool-policy-match.js";
 import {
   restartCliLiveSession,
   createCliLiveSessionCapability,
@@ -67,6 +71,21 @@ function createPluginToolPermissionHandler(params: {
     agentId: run.agentId,
     sessionKey: run.runtimePolicySessionKey ?? run.sessionKey,
   });
+  const toolPolicies = resolvePluginHarnessToolPolicies({
+    ...run,
+    modelId: params.context.modelId,
+    preparedSessionEntry: run.sessionEntry,
+  });
+  const effectiveToolPolicies = [
+    toolPolicies.senderPolicy,
+    toolPolicies.senderScopedGroupPolicy,
+    toolPolicies.groupPolicy,
+    ...toolPolicies.runtimePolicies,
+  ];
+  const fsWorkspaceOnly = resolveEffectiveToolFsWorkspaceOnly({
+    cfg: run.config,
+    agentId: run.agentId,
+  });
   const grants = new Set<string>();
 
   return async (request) => {
@@ -90,6 +109,9 @@ function createPluginToolPermissionHandler(params: {
 
     // Provider schemas are not policy schemas: match canonical names and file operands.
     const canonicalToolName = normalizeCliToolName(toolName);
+    if (!isToolAllowedByPolicies(canonicalToolName, effectiveToolPolicies)) {
+      return denyTool(`OpenClaw tool policy denied native tool ${canonicalToolName}.`);
+    }
     const nativeFileTool =
       ["read", "write", "edit"].includes(canonicalToolName) &&
       Object.hasOwn(request.toolInput, "file_path");
@@ -101,6 +123,17 @@ function createPluginToolPermissionHandler(params: {
       }
       if (Object.hasOwn(request.toolInput, "path") && request.toolInput.path !== nativePath) {
         return denyTool("OpenClaw denied native file tool use: conflicting file paths.");
+      }
+      if (fsWorkspaceOnly) {
+        try {
+          await assertSandboxPath({
+            filePath: nativePath,
+            cwd: params.context.cwd ?? params.context.workspaceDir,
+            root: params.context.workspaceDir,
+          });
+        } catch (error) {
+          return denyTool(error instanceof Error ? error.message : String(error));
+        }
       }
       policyInput = { ...request.toolInput, path: nativePath };
       if (canonicalToolName === "edit") {

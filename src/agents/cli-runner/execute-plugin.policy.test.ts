@@ -52,6 +52,114 @@ afterEach(() => {
 });
 
 describe("plugin-owned CLI native tool policy", () => {
+  it.each([
+    { native: "Bash", canonical: "exec", input: { command: "echo blocked" } },
+    { native: "Read", canonical: "read", input: { file_path: "/tmp/input.txt" } },
+    { native: "Write", canonical: "write", input: { file_path: "/tmp/output.txt" } },
+    {
+      native: "WebFetch",
+      canonical: "web_fetch",
+      input: { url: "https://example.com" },
+    },
+  ])("enforces a minimal profile for native $native", async ({ native, canonical, input }) => {
+    const { context } = await createExecution({
+      config: {
+        tools: { profile: "minimal", exec: { security: "full", ask: "off" } },
+      },
+    });
+
+    await runPlugin(context, async function* (execution) {
+      await expect(requestNativeTool(execution, native, input)).resolves.toEqual({
+        behavior: "deny",
+        message: `OpenClaw tool policy denied native tool ${canonical}.`,
+      });
+      yield SUCCESS_RESULT;
+    });
+  });
+
+  it("honors alsoAllow without widening unrelated native tools", async () => {
+    const { context } = await createExecution({
+      config: {
+        tools: {
+          profile: "minimal",
+          alsoAllow: ["exec"],
+          exec: { security: "full", ask: "off" },
+        },
+      },
+    });
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        requestNativeTool(execution, "Bash", { command: "echo allowed" }),
+      ).resolves.toEqual({
+        behavior: "allow",
+        updatedInput: { command: "echo allowed" },
+      });
+      await expect(
+        requestNativeTool(execution, "Read", { file_path: "/tmp/input.txt" }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: "OpenClaw tool policy denied native tool read.",
+      });
+      yield SUCCESS_RESULT;
+    });
+  });
+
+  it("honors explicit native tool denies before exec approval", async () => {
+    const { context } = await createExecution({
+      config: {
+        tools: {
+          profile: "full",
+          deny: ["web_fetch"],
+          exec: { security: "full", ask: "off" },
+        },
+      },
+    });
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        requestNativeTool(execution, "WebFetch", { url: "https://example.com" }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: "OpenClaw tool policy denied native tool web_fetch.",
+      });
+      yield SUCCESS_RESULT;
+    });
+  });
+
+  it.each(["Read", "Write", "Edit"])(
+    "enforces workspaceOnly for native %s paths",
+    async (native) => {
+      const { context } = await createExecution({
+        config: {
+          tools: {
+            profile: "full",
+            fs: { workspaceOnly: true },
+            exec: { security: "full", ask: "off" },
+          },
+        },
+      });
+      const insideInput =
+        native === "Edit"
+          ? { file_path: "/tmp/inside.txt", old_string: "before", new_string: "after" }
+          : { file_path: "/tmp/inside.txt" };
+      const outsideInput =
+        native === "Edit"
+          ? { file_path: "/etc/hostname", old_string: "before", new_string: "after" }
+          : { file_path: "/etc/hostname" };
+
+      await runPlugin(context, async function* (execution) {
+        await expect(requestNativeTool(execution, native, insideInput)).resolves.toMatchObject({
+          behavior: "allow",
+        });
+        await expect(requestNativeTool(execution, native, outsideInput)).resolves.toEqual({
+          behavior: "deny",
+          message: expect.stringMatching(/^Path escapes sandbox root/),
+        });
+        yield SUCCESS_RESULT;
+      });
+    },
+  );
   it("uses the admitted turn policy when a warm transport retains a retired generation", async () => {
     const oldHook = vi.fn();
     const previous = createMockPluginRegistry([
