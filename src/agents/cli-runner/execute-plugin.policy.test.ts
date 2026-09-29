@@ -127,6 +127,54 @@ describe("plugin-owned CLI native tool policy", () => {
     });
   });
 
+  it("uses the selected model provider for native tool policy", async () => {
+    const { context } = await createExecution({
+      config: {
+        tools: {
+          profile: "full",
+          byProvider: { anthropic: { deny: ["exec"] } },
+          exec: { security: "full", ask: "off" },
+        },
+      },
+    });
+    context.params.modelProvider = "anthropic";
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        requestNativeTool(execution, "Bash", { command: "echo blocked" }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: "OpenClaw tool policy denied native tool exec.",
+      });
+      yield SUCCESS_RESULT;
+    });
+  });
+
+  it("uses the runtime policy session agent for native tool policy", async () => {
+    const { context } = await createExecution({
+      config: {
+        agents: {
+          entries: {
+            main: { tools: { profile: "full" } },
+            worker: { tools: { profile: "minimal" } },
+          },
+        },
+        tools: { exec: { security: "full", ask: "off" } },
+      },
+    });
+    context.params.runtimePolicySessionKey = "agent:worker:main";
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        requestNativeTool(execution, "Bash", { command: "echo blocked" }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: "OpenClaw tool policy denied native tool exec.",
+      });
+      yield SUCCESS_RESULT;
+    });
+  });
+
   it.each(["Read", "Write", "Edit"])(
     "enforces workspaceOnly for native %s paths",
     async (native) => {
@@ -408,6 +456,40 @@ describe("plugin-owned CLI native tool policy", () => {
     },
   );
 
+  it("rejects a hook-rewritten native file path outside the workspace", async () => {
+    const hook = vi.fn(async () => ({
+      params: {
+        path: "/etc/hostname",
+        edits: [{ oldText: "safe-before", newText: "safe-after" }],
+      },
+    }));
+    installBeforeToolCallHook(hook, ["edit"]);
+    const { context } = await createExecution({
+      config: {
+        tools: {
+          profile: "full",
+          fs: { workspaceOnly: true },
+          exec: { security: "full", ask: "off" },
+        },
+      },
+      nativeTools: ["Edit"],
+    });
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        requestNativeTool(execution, "Edit", {
+          file_path: "/tmp/original.txt",
+          old_string: "before",
+          new_string: "after",
+        }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: expect.stringMatching(/^Path escapes sandbox root/),
+      });
+      yield SUCCESS_RESULT;
+    });
+  });
+
   it("projects rewritten canonical file arguments back into the native Edit schema", async () => {
     const hook = vi.fn(async () => ({
       params: {
@@ -448,6 +530,23 @@ describe("plugin-owned CLI native tool policy", () => {
         replace_all: false,
       },
     });
+  });
+
+  it("rejects native file tools that omit their native file_path operand", async () => {
+    const hook = vi.fn(async () => undefined);
+    installBeforeToolCallHook(hook, ["read"]);
+    const { context } = await createExecution({ nativeTools: ["Read"] });
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        requestNativeTool(execution, "Read", { path: "/tmp/input.txt" }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: "OpenClaw denied native file tool use: invalid file path.",
+      });
+      yield SUCCESS_RESULT;
+    });
+    expect(hook).not.toHaveBeenCalled();
   });
 
   it("rejects conflicting native and canonical paths before invoking policy", async () => {
