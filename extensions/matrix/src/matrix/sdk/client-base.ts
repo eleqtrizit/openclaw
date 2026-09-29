@@ -32,10 +32,10 @@ import {
   closeMatrixCryptoStores,
   createMatrixCryptoInitializationGate,
   createMatrixCryptoYieldHandlers,
+  persistMatrixFinalState,
 } from "./crypto-store-lifecycle.js";
 import {
   acquireMatrixCryptoStoreOwnership,
-  poisonMatrixCryptoStore,
   type MatrixCryptoStoreOwnership,
 } from "./crypto-store-ownership.js";
 import type { MatrixDecryptBridge } from "./decrypt-bridge.js";
@@ -584,25 +584,23 @@ export abstract class MatrixClientBase {
         this.cryptoRequestOwner.disable();
       }
       await Promise.all([this.recoveryKeyStore.close(), activePeriodicPersist]);
-      if (!persist && this.cryptoInitialized && this.cryptoStoreOwnership && this.idbSnapshotPath) {
-        await poisonMatrixCryptoStore(this.idbSnapshotPath);
-      }
       if (persist) {
-        const runtime = loadedMatrixCryptoRuntime ?? (await loadMatrixCryptoRuntime());
-        await runtime.persistIdbToDisk({
+        await persistMatrixFinalState({
+          cryptoInitialized: this.cryptoInitialized,
+          ownership: this.cryptoStoreOwnership,
           snapshotPath: this.idbSnapshotPath,
-          databasePrefix: this.cryptoDatabasePrefix,
-          strict: true,
-          stateRuntime: this.stateRuntime,
+          persistSnapshot: async () => {
+            const runtime = loadedMatrixCryptoRuntime ?? (await loadMatrixCryptoRuntime());
+            await runtime.persistIdbToDisk({
+              snapshotPath: this.idbSnapshotPath,
+              databasePrefix: this.cryptoDatabasePrefix,
+              strict: true,
+              stateRuntime: this.stateRuntime,
+            });
+          },
+          syncStore: this.syncStore,
         });
-        this.syncStore?.markCleanShutdown();
-        await this.syncStore?.flush();
       }
-    } catch (error) {
-      if (this.cryptoInitialized && this.cryptoStoreOwnership && this.idbSnapshotPath) {
-        await poisonMatrixCryptoStore(this.idbSnapshotPath);
-      }
-      throw error;
     } finally {
       await closeMatrixCryptoStores(
         () => this.recoveryKeyStore.close(),
@@ -709,6 +707,8 @@ export abstract class MatrixClientBase {
     try {
       // Restore persisted IndexedDB crypto store before initializing WASM crypto.
       await restoreIdbFromDisk(this.idbSnapshotPath, this.stateRuntime, this.cryptoDatabasePrefix);
+      throwIfMatrixStartupAborted(abortSignal);
+      await this.cryptoStoreOwnership?.armUnsafeState();
       throwIfMatrixStartupAborted(abortSignal);
 
       try {

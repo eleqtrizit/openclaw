@@ -22,10 +22,7 @@ import {
   writeMatrixIdbSnapshotJson,
   type MatrixIdbSnapshotRecord,
 } from "../crypto-state-store.js";
-import {
-  acquireMatrixCryptoStoreOwnership,
-  poisonMatrixCryptoStore,
-} from "./crypto-store-ownership.js";
+import { acquireMatrixCryptoStoreOwnership } from "./crypto-store-ownership.js";
 import { persistIdbToDisk, restoreIdbFromDisk } from "./idb-persistence.js";
 import {
   clearAllIndexedDbState,
@@ -87,7 +84,7 @@ describe("Matrix IndexedDB persistence", () => {
   it("refuses a successor after a failed final state publication", async () => {
     const snapshotPath = path.join(tmpDir, "crypto-idb-snapshot.json");
     const owner = await acquireMatrixCryptoStoreOwnership(snapshotPath);
-    await poisonMatrixCryptoStore(snapshotPath);
+    await owner.armUnsafeState();
     await owner.release();
     await expect(acquireMatrixCryptoStoreOwnership(snapshotPath)).rejects.toThrow(
       "unresolved unsafe final state",
@@ -107,7 +104,7 @@ describe("Matrix IndexedDB persistence", () => {
       });
     }
     expect((await fs.promises.readdir(`${snapshotPath}.owner.waiters`)).length).toBeGreaterThan(0);
-    await poisonMatrixCryptoStore(snapshotPath);
+    await owner.armUnsafeState();
     await owner.release();
     await expect(successor).rejects.toThrow("unresolved unsafe final state");
   });

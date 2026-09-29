@@ -1,3 +1,4 @@
+import type { SqliteBackedMatrixSyncStore } from "../client/file-sync-store.js";
 import type { MatrixCryptoStoreOwnership } from "./crypto-store-ownership.js";
 
 /** A shared SDK generation can have more than one monitor lease. */
@@ -40,6 +41,27 @@ export async function closeMatrixCryptoStores(
   }
   if (failures.length === 1) {
     throw failures[0];
+  }
+}
+
+/** Final publication is allowed only for a generation that initialized under custody. */
+export async function persistMatrixFinalState(params: {
+  cryptoInitialized: boolean;
+  ownership: MatrixCryptoStoreOwnership | null;
+  snapshotPath?: string;
+  persistSnapshot: () => Promise<void>;
+  syncStore?: SqliteBackedMatrixSyncStore;
+}): Promise<void> {
+  if (params.cryptoInitialized) {
+    if (params.snapshotPath && !params.ownership) {
+      throw new Error("Refusing Matrix crypto snapshot publication without ownership");
+    }
+    await params.persistSnapshot();
+  }
+  params.syncStore?.markCleanShutdown();
+  await params.syncStore?.flush();
+  if (params.cryptoInitialized) {
+    await params.ownership?.clearUnsafeState();
   }
 }
 

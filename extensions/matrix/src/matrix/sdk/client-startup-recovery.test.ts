@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { ClientEvent, type MatrixClient as MatrixJsClient } from "matrix-js-sdk/lib/matrix.js";
 import { SyncState } from "matrix-js-sdk/lib/sync.js";
@@ -5,6 +6,7 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MatrixClient } from "../sdk.js";
+import { persistIdbToDisk, restoreIdbFromDisk } from "./idb-persistence.js";
 
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => afterEach(cleanup));
 
@@ -168,6 +170,97 @@ describe("Matrix encrypted startup ownership", () => {
       finish.resolve();
       await startup.catch(() => undefined);
       await Promise.allSettled([owner.stopWithoutPersist(), replacement.stopWithoutPersist()]);
+    }
+  });
+
+  it("never publishes a canceled replacement that did not acquire crypto ownership", async () => {
+    const tempDir = tempDirs.make("matrix-unowned-replacement-");
+    const snapshotPath = path.join(tempDir, "snapshot.json");
+    const options = {
+      userId: "@bot:example.org",
+      deviceId: "BOT",
+      encryption: true,
+      autoBootstrapCrypto: false,
+      cryptoDatabasePrefix: "openclaw-matrix-unowned-test",
+      idbSnapshotPath: snapshotPath,
+    };
+    const owner = new MatrixClient("https://matrix.example.org", "test-token", options);
+    const replacement = new MatrixClient("https://matrix.example.org", "test-token", options);
+    const abort = new AbortController();
+    try {
+      await owner.prepareForOneOff();
+      const savedBefore = vi.mocked(persistIdbToDisk).mock.calls.length;
+      const replacementStartup = replacement.start({ abortSignal: abort.signal });
+      const rejected = expect(replacementStartup).rejects.toMatchObject({ name: "AbortError" });
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 300);
+      });
+      abort.abort();
+      await rejected;
+      await replacement.stopAndPersist();
+      expect(vi.mocked(persistIdbToDisk).mock.calls.length).toBe(savedBefore);
+      await owner.stopAndPersist();
+      expect(await fs.stat(`${snapshotPath}.owner.poisoned`).catch(() => null)).toBeNull();
+      const successor = new MatrixClient("https://matrix.example.org", "test-token", options);
+      try {
+        await successor.prepareForOneOff();
+      } finally {
+        await successor.stopAndPersist();
+      }
+    } finally {
+      abort.abort();
+      await Promise.allSettled([owner.stopWithoutPersist(), replacement.stopWithoutPersist()]);
+    }
+  });
+
+  it("refuses a successor when final snapshot publication fails", async () => {
+    const tempDir = tempDirs.make("matrix-failed-final-save-");
+    const snapshotPath = path.join(tempDir, "snapshot.json");
+    const options = {
+      userId: "@bot:example.org",
+      deviceId: "BOT",
+      encryption: true,
+      autoBootstrapCrypto: false,
+      cryptoDatabasePrefix: "openclaw-matrix-failed-save-test",
+      idbSnapshotPath: snapshotPath,
+    };
+    const owner = new MatrixClient("https://matrix.example.org", "test-token", options);
+    try {
+      await owner.prepareForOneOff();
+      expect(await fs.stat(`${snapshotPath}.owner.poisoned`)).toBeDefined();
+      vi.mocked(persistIdbToDisk).mockRejectedValueOnce(new Error("disk full"));
+      await expect(owner.stopAndPersist()).rejects.toThrow("disk full");
+      const successor = new MatrixClient("https://matrix.example.org", "test-token", options);
+      try {
+        await expect(successor.prepareForOneOff()).rejects.toThrow("unresolved unsafe final state");
+      } finally {
+        await successor.stopWithoutPersist();
+      }
+    } finally {
+      await owner.stopWithoutPersist();
+    }
+  });
+
+  it("refuses crypto initialization when unsafe-state arming fails", async () => {
+    const tempDir = tempDirs.make("matrix-unsafe-state-arm-failure-");
+    const snapshotPath = path.join(tempDir, "snapshot.json");
+    vi.mocked(restoreIdbFromDisk).mockImplementationOnce(async () => {
+      await fs.mkdir(`${snapshotPath}.owner.poisoned`);
+      return false;
+    });
+    const owner = new MatrixClient("https://matrix.example.org", "test-token", {
+      userId: "@bot:example.org",
+      deviceId: "BOT",
+      encryption: true,
+      autoBootstrapCrypto: false,
+      cryptoDatabasePrefix: "openclaw-matrix-arm-failure-test",
+      idbSnapshotPath: snapshotPath,
+    });
+    try {
+      await expect(owner.prepareForOneOff()).rejects.toThrow();
+      expect(fixture.init).not.toHaveBeenCalled();
+    } finally {
+      await owner.stopWithoutPersist();
     }
   });
 
