@@ -248,6 +248,14 @@ export function createReplyMediaSourcePreparer(params: {
     }
     const sessionRoot = path.resolve(effectiveSessionWorkspaceDir);
     const underlyingReadFile = mediaAccess.readFile;
+    const hasSessionRootGrant = mediaAccess.localRoots?.some(
+      (root) => path.resolve(root) === sessionRoot,
+    );
+    if (!underlyingReadFile && !hasSessionRootGrant) {
+      // Managed-only roots with no reader are an authoritative sender/group
+      // tool-policy denial. Never turn them into a new session-root grant.
+      return mediaAccess;
+    }
     const readFile = underlyingReadFile
       ? createBoundedOutboundMediaReadFile(async (filePath, options) => {
           await assertLocalMediaAllowed(filePath, [sessionRoot]);

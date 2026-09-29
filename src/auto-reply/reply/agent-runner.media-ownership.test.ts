@@ -22,6 +22,7 @@ type MediaOwnerCase = {
   permissionMode?: "workspace" | "full";
   appliedPermissionMode?: "workspace";
   configWorkspaceOnly?: boolean;
+  senderReadDenied?: boolean;
   expectedMedia: number;
 };
 
@@ -53,6 +54,15 @@ describe("runReplyAgent media delivery ownership", () => {
       gateway: false,
       permissionMode: "workspace" as const,
       expectedMedia: 1,
+    },
+    {
+      label: "runner workspace with sender read denied",
+      sessionKey: "global",
+      provider: "slack",
+      gateway: false,
+      permissionMode: "workspace" as const,
+      senderReadDenied: true,
+      expectedMedia: 0,
     },
     {
       label: "runner full",
@@ -97,6 +107,7 @@ describe("runReplyAgent media delivery ownership", () => {
       permissionMode,
       appliedPermissionMode,
       configWorkspaceOnly,
+      senderReadDenied,
       expectedMedia,
     }) => {
       const { normalizeWebchatReplyMediaPathsForDisplay } =
@@ -129,6 +140,9 @@ describe("runReplyAgent media delivery ownership", () => {
               tools: {
                 allow: ["read"],
                 ...(configWorkspaceOnly ? { fs: { workspaceOnly: true } } : {}),
+                ...(senderReadDenied
+                  ? { toolsBySender: { "id:blocked-sender": { deny: ["read"] } } }
+                  : {}),
               },
               agents: {
                 ownership: "explicit",
@@ -166,6 +180,7 @@ describe("runReplyAgent media delivery ownership", () => {
                     agentId: "qa",
                     sessionKey,
                     messageProvider: provider,
+                    senderId: senderReadDenied ? "blocked-sender" : undefined,
                     workspaceDir,
                     permissionMode,
                     sessionRoot: selected,
@@ -196,13 +211,16 @@ describe("runReplyAgent media delivery ownership", () => {
               expect(display?.text).toContain("outside.png: Delivery failed.");
               expect(await readFile(display!.mediaUrls![0]!)).toEqual(bytes);
             } else {
-              expect(result.mediaUrls).toHaveLength(expectedMedia);
+              expect(result.mediaUrls ?? []).toHaveLength(expectedMedia);
               expect(result.mediaUrls).not.toEqual(sources);
               for (const file of result.mediaUrls ?? []) {
                 expect(await readFile(file)).toEqual(bytes);
               }
-              if (expectedMedia === 1) {
+              if (expectedMedia < 2) {
                 expect(result.text).toContain("outside.png: Delivery failed.");
+              }
+              if (expectedMedia === 0) {
+                expect(result.text).toContain("generated.png: Delivery failed.");
               }
             }
             expect(runEmbeddedAgentMock).toHaveBeenCalledOnce();
