@@ -7,7 +7,7 @@ import {
   CRON_CREATOR_AUTHORITY_RECOVERY_MESSAGE,
   cronMutationRequiresStreamExecAuthority,
   cronUpdateRequiresStreamExecAuthority,
-  hasCronCreatorExecTool,
+  hasCronCreatorGatewayExecTool,
   INCOMPLETE_CRON_CREATOR_AUTHORITY_MESSAGE,
   isCronCreatorToolCaptureComplete,
   planCronJobUpdatePatch,
@@ -37,7 +37,7 @@ export function assertCronStreamExecAuthority(params: {
   const effectiveAsk = pinnedTarget?.ask ?? params.execDefaults?.ask;
   if (
     !params.execDefaults ||
-    !hasCronCreatorExecTool(params.creatorToolAllowlist) ||
+    !hasCronCreatorGatewayExecTool(params.creatorToolAllowlist) ||
     params.execDefaults.effectiveHost !== "gateway" ||
     params.execDefaults.security !== "full" ||
     effectiveAsk !== "off"

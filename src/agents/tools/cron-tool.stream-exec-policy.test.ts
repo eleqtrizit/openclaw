@@ -24,7 +24,14 @@ function streamJob() {
 }
 
 function createStreamTool(params: {
-  tools?: Array<string | { name: string; execTarget?: { host: "gateway"; ask?: "always" } }>;
+  tools?: Array<
+    | string
+    | {
+        name: string;
+        execOrigin?: "openclaw" | "native";
+        execTarget?: { host: "gateway"; ask?: "always" };
+      }
+  >;
   execDefaults?: ResolvedExecDefaults;
 }) {
   const callGatewayTool = vi.fn();
@@ -43,7 +50,9 @@ function createStreamTool(params: {
 
 describe("cron stream creator exec policy", () => {
   it("allows creation when the final creator surface has unattended full Gateway exec", async () => {
-    const { tool, callGatewayTool } = createStreamTool({ tools: ["exec"] });
+    const { tool, callGatewayTool } = createStreamTool({
+      tools: [{ name: "exec", execOrigin: "openclaw" }],
+    });
 
     await tool.execute("stream-add", { action: "add", job: streamJob() });
 
@@ -54,25 +63,71 @@ describe("cron stream creator exec policy", () => {
     );
   });
 
+  it("allows native exec only when its runtime owner pins it to Gateway", async () => {
+    const { tool, callGatewayTool } = createStreamTool({
+      tools: [
+        {
+          name: "exec",
+          execOrigin: "native",
+          execTarget: { host: "gateway" },
+        },
+      ],
+    });
+
+    await tool.execute("native-gateway-stream-add", { action: "add", job: streamJob() });
+
+    expect(callGatewayTool).toHaveBeenCalledWith(
+      "cron.add",
+      expect.anything(),
+      expect.objectContaining({ schedule: streamJob().schedule }),
+    );
+  });
+
   it.each([
     ["exec is absent", ["read"], FULL_GATEWAY_EXEC],
-    ["exec is sandboxed", ["exec"], withExecDefaults({ host: "auto", effectiveHost: "sandbox" })],
+    [
+      "exec is sandboxed",
+      [{ name: "exec", execOrigin: "openclaw" as const }],
+      withExecDefaults({ host: "auto", effectiveHost: "sandbox" }),
+    ],
     [
       "exec is allowlisted",
-      ["exec"],
+      [{ name: "exec", execOrigin: "openclaw" as const }],
       withExecDefaults({ mode: "allowlist", security: "allowlist" }),
     ],
-    ["exec requires approval", ["exec"], withExecDefaults({ mode: "ask", ask: "always" })],
+    [
+      "exec requires approval",
+      [{ name: "exec", execOrigin: "openclaw" as const }],
+      withExecDefaults({ mode: "ask", ask: "always" }),
+    ],
     [
       "the captured exec alias requires approval",
-      [{ name: "exec", execTarget: { host: "gateway" as const, ask: "always" as const } }],
+      [
+        {
+          name: "exec",
+          execOrigin: "openclaw" as const,
+          execTarget: { host: "gateway" as const, ask: "always" as const },
+        },
+      ],
       FULL_GATEWAY_EXEC,
     ],
     [
       "a captured Gateway pin cannot override sandbox placement",
-      [{ name: "exec", execTarget: { host: "gateway" as const } }],
+      [
+        {
+          name: "exec",
+          execOrigin: "openclaw" as const,
+          execTarget: { host: "gateway" as const },
+        },
+      ],
       withExecDefaults({ host: "auto", effectiveHost: "sandbox" }),
     ],
+    [
+      "exec is an unpinned native shell even when OpenClaw defaults resolve Gateway",
+      [{ name: "exec", execOrigin: "native" as const }],
+      FULL_GATEWAY_EXEC,
+    ],
+    ["legacy exec has no captured runtime origin", ["exec"], FULL_GATEWAY_EXEC],
   ])("rejects creation when %s", async (_label, tools, execDefaults) => {
     const { tool, callGatewayTool } = createStreamTool({ tools, execDefaults });
 
@@ -146,7 +201,9 @@ describe("cron stream creator exec policy", () => {
     ).rejects.toThrow("unattended full Gateway exec authority");
     expect(weak.callGatewayTool.mock.calls.map((call) => call[0])).toEqual(["cron.get"]);
 
-    const strong = createStreamTool({ tools: ["exec"] });
+    const strong = createStreamTool({
+      tools: [{ name: "exec", execOrigin: "openclaw" }],
+    });
     strong.callGatewayTool.mockImplementation(async (method: string) =>
       method === "cron.get"
         ? { ...streamJob(), id: "stream-1", enabled: false, configRevision: "revision-1" }

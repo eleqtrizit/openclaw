@@ -18,6 +18,8 @@ export type CronCreatorToolAllowlistEntry =
       pluginId?: string;
       /** Runtime-specific alias the creator surface presented for this tool. */
       aliasName?: string;
+      /** Runtime owner that supplied exec; required for process-bearing stream writes. */
+      execOrigin?: "openclaw" | "native";
       /** Restrict-only execution policy carried by a host-created alias projection. */
       execTarget?: { host: "gateway"; ask?: "always" };
     };

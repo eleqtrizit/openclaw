@@ -89,7 +89,7 @@ function toolArgs(instance: OpenClawTestInstance) {
 function createStrongTool(deps?: { callGatewayTool?: GatewayToolCaller }) {
   return createCronTool(
     {
-      creatorToolAllowlist: ["exec"],
+      creatorToolAllowlist: [{ name: "exec", execOrigin: "openclaw" }],
       execOverrides: { host: "gateway", security: "full", ask: "off" },
       sandboxed: false,
     },
@@ -101,6 +101,18 @@ function createWeakTool(deps?: { callGatewayTool?: GatewayToolCaller }) {
   return createCronTool(
     {
       creatorToolAllowlist: ["read"],
+      execOverrides: { host: "gateway", security: "full", ask: "off" },
+      sandboxed: false,
+    },
+    deps,
+  );
+}
+
+function createRemoteNativeOnlyTool(deps?: { callGatewayTool?: GatewayToolCaller }) {
+  return createCronTool(
+    {
+      creatorToolAllowlist: [{ name: "exec", execOrigin: "native" }],
+      // Remote Codex placement is independent of these OpenClaw defaults.
       execOverrides: { host: "gateway", security: "full", ask: "off" },
       sandboxed: false,
     },
@@ -235,6 +247,27 @@ describe("cron stream agent authority final effects", () => {
         });
 
         const persistedCount = createdJobs.jobs.length;
+        let remoteNativeGatewayCalls = 0;
+        const remoteNativeOnly = createRemoteNativeOnlyTool({
+          callGatewayTool: async (...args) => {
+            remoteNativeGatewayCalls += 1;
+            return await callGatewayTool(...args);
+          },
+        });
+        await expect(
+          remoteNativeOnly.execute("denied-remote-native-create", {
+            action: "add",
+            ...toolArgs(instance),
+            job: { ...streamInput, name: "denied remote native authority stream" },
+          }),
+        ).rejects.toThrow("unattended full Gateway exec authority");
+        expect(remoteNativeGatewayCalls).toBe(0);
+        expect((await cliJson<{ jobs: CronJob[] }>(instance, ["cron", "list"])).jobs).toHaveLength(
+          persistedCount,
+        );
+        expect(Number(await fs.readFile(pidPath, "utf8"))).toBe(firstPid);
+        process.kill(firstPid, 0);
+
         await expect(
           weak.execute("denied-create", {
             action: "add",
