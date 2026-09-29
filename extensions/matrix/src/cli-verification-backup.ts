@@ -14,14 +14,7 @@ export function registerMatrixVerificationBackupCommands(verify: Command): void 
     .action(async (options: cli.MatrixCliOptions) => {
       const { accountId, cfg } = cli.resolveMatrixCliAccountContext(options.account);
       await cli.runMatrixCliCommand(options, {
-        run: async () =>
-          await cli.runMatrixCliOwnerAction({
-            accountId,
-            operation: "verification-backup-status",
-            resultField: "status",
-            runLocal: async () =>
-              await verification.getMatrixRoomKeyBackupStatus({ accountId, cfg }),
-          }),
+        run: async () => await verification.getMatrixRoomKeyBackupStatus({ accountId, cfg }),
         onText: (status, verbose) => {
           cli.printAccountLabel(accountId);
           cli.printBackupSummary(status);
@@ -59,20 +52,10 @@ export function registerMatrixVerificationBackupCommands(verify: Command): void 
                 `Refusing to reset Matrix room-key backup without --yes. If you accept losing unrecoverable history, re-run ${cli.formatMatrixCliCommand("verify backup reset --yes", accountId)}.`,
               );
             }
-            return await cli.runMatrixCliOwnerAction({
+            return await verification.resetMatrixRoomKeyBackup({
               accountId,
-              operation: "verification-backup-reset",
-              actionParams: {
-                confirmBackupReset: true,
-                rotateRecoveryKey: options.rotateRecoveryKey === true,
-              },
-              resultField: "result",
-              runLocal: async () =>
-                await verification.resetMatrixRoomKeyBackup({
-                  accountId,
-                  cfg,
-                  rotateRecoveryKey: options.rotateRecoveryKey === true,
-                }),
+              cfg,
+              rotateRecoveryKey: options.rotateRecoveryKey === true,
             });
           },
           onText: (result, verbose) => {
@@ -124,17 +107,12 @@ export function registerMatrixVerificationBackupCommands(verify: Command): void 
       ) => {
         const { accountId, cfg } = cli.resolveMatrixCliAccountContext(options.account);
         await cli.runMatrixCliCommand(options, {
-          run: async () => {
-            const recoveryKey = await cli.resolveMatrixCliRecoveryKeyInput(options);
-            return await cli.runMatrixCliOwnerAction({
+          run: async () =>
+            await verification.restoreMatrixRoomKeyBackup({
               accountId,
-              operation: "verification-backup-restore",
-              actionParams: { recoveryKey },
-              resultField: "result",
-              runLocal: async () =>
-                await verification.restoreMatrixRoomKeyBackup({ accountId, cfg, recoveryKey }),
-            });
-          },
+              cfg,
+              recoveryKey: await cli.resolveMatrixCliRecoveryKeyInput(options),
+            }),
           onText: (result, verbose) => {
             cli.printAccountLabel(accountId);
             console.log(`Restore success: ${result.success ? "yes" : "no"}`);
@@ -187,23 +165,13 @@ export function registerMatrixVerificationBackupCommands(verify: Command): void 
       ) => {
         const { accountId, cfg } = cli.resolveMatrixCliAccountContext(options.account);
         await cli.runMatrixCliCommand(options, {
-          run: async () => {
-            const recoveryKey = await cli.resolveMatrixCliRecoveryKeyInput(options);
-            const forceResetCrossSigning = options.forceResetCrossSigning === true;
-            return await cli.runMatrixCliOwnerAction({
+          run: async () =>
+            await verification.bootstrapMatrixVerification({
               accountId,
-              operation: "verification-bootstrap",
-              actionParams: { recoveryKey, forceResetCrossSigning },
-              resultField: "result",
-              runLocal: async () =>
-                await verification.bootstrapMatrixVerification({
-                  accountId,
-                  cfg,
-                  recoveryKey,
-                  forceResetCrossSigning,
-                }),
-            });
-          },
+              cfg,
+              recoveryKey: await cli.resolveMatrixCliRecoveryKeyInput(options),
+              forceResetCrossSigning: options.forceResetCrossSigning === true,
+            }),
           onText: (result, verbose) => {
             cli.printAccountLabel(accountId);
             console.log(`Bootstrap success: ${result.success ? "yes" : "no"}`);
@@ -260,20 +228,14 @@ export function registerMatrixVerificationBackupCommands(verify: Command): void 
       ) => {
         const { accountId, cfg } = cli.resolveMatrixCliAccountContext(options.account);
         await cli.runMatrixCliCommand(options, {
-          run: async () => {
-            const recoveryKey = await cli.requireMatrixCliRecoveryKeyInput({
-              recoveryKey: key,
-              recoveryKeyStdin: options.recoveryKeyStdin,
-            });
-            return await cli.runMatrixCliOwnerAction({
-              accountId,
-              operation: "verification-recovery-key",
-              actionParams: { recoveryKey },
-              resultField: "result",
-              runLocal: async () =>
-                await verification.verifyMatrixRecoveryKey(recoveryKey, { accountId, cfg }),
-            });
-          },
+          run: async () =>
+            await verification.verifyMatrixRecoveryKey(
+              await cli.requireMatrixCliRecoveryKeyInput({
+                recoveryKey: key,
+                recoveryKeyStdin: options.recoveryKeyStdin,
+              }),
+              { accountId, cfg },
+            ),
           onText: (result, verbose) => {
             cli.printAccountLabel(accountId);
             if (!result.success) {

@@ -505,8 +505,7 @@ export async function executeMessageSend(ctx: ResolvedActionContext): Promise<Me
   const usesGatewayAction =
     !requiresCoreDelivery &&
     Boolean(gateway) &&
-    (input.forceGatewayAction === true ||
-      channelPlugin?.actions?.resolveExecutionMode?.({ action }) === "gateway" ||
+    (channelPlugin?.actions?.resolveExecutionMode?.({ action }) === "gateway" ||
       channelPlugin?.outbound?.deliveryMode === "gateway");
   if (usesGatewayAction && !dryRun) {
     const stagedPayload = await stageGatewayWorkspaceMedia({

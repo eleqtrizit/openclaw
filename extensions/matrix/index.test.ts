@@ -11,7 +11,6 @@ const runtimeMocks = vi.hoisted(() => ({
   ensureMatrixCryptoRuntime: vi.fn(async () => {}),
   handleMatrixSubagentDeliveryTarget: vi.fn(() => "delivery-target"),
   handleMatrixSubagentEnded: vi.fn(async () => {}),
-  handleMatrixOperatorAction: vi.fn(async () => {}),
   handleVerificationBootstrap: vi.fn(async () => {}),
   handleVerificationStatus: vi.fn(async () => {}),
   handleVerifyRecoveryKey: vi.fn(async () => {}),
@@ -103,14 +102,6 @@ describe("matrix plugin", () => {
     registerMatrixFullRuntime(api);
 
     expect(runtimeMocks.ensureMatrixCryptoRuntime).not.toHaveBeenCalled();
-    expect(
-      registerGatewayMethod.mock.calls.map(([method, _handler, options]) => [method, options]),
-    ).toEqual([
-      ["matrix.verify.recoveryKey", { scope: "operator.admin" }],
-      ["matrix.verify.bootstrap", { scope: "operator.admin" }],
-      ["matrix.verify.status", { scope: "operator.admin" }],
-      ["matrix.operatorAction", { scope: "operator.admin" }],
-    ]);
     expect(on.mock.calls.map(([hookName]) => hookName)).toEqual([
       "subagent_ended",
       "subagent_delivery_target",

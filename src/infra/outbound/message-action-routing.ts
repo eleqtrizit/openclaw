@@ -388,8 +388,7 @@ export async function prepareMessageRoute(params: {
   }
   const delegatesActionToGateway =
     Boolean(input.gateway) &&
-    (input.forceGatewayAction === true ||
-      channelPlugin?.actions?.resolveExecutionMode?.({ action }) === "gateway");
+    channelPlugin?.actions?.resolveExecutionMode?.({ action }) === "gateway";
   // Resolve once for locally owned sends so formatting and delivery share an
   // identity. Remote calls must retain omitted input for the Gateway to resolve.
   if (

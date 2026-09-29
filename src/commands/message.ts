@@ -31,15 +31,6 @@ import {
 import { runMessageAction } from "../infra/outbound/message-action-runner.js";
 import { type RuntimeEnv, writeRuntimeJson } from "../runtime.js";
 
-function shouldRetryMessageActionThroughGateway(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === "object" &&
-    "retryViaGateway" in error &&
-    error.retryViaGateway === true
-  );
-}
-
 function buildMessageCliJson(result: Awaited<ReturnType<typeof runMessageAction>>) {
   const messageId = resolveMessageActionMessageId(result.payload);
   const sendResult = result.kind === "send" ? result.sendResult : undefined;
@@ -132,7 +123,7 @@ export async function messageCommand(
 
   // Keep the gateway client identity explicit so channel plugins can distinguish
   // CLI-originated owner actions from background gateway work.
-  const run = async (forceGatewayAction = false) =>
+  const run = async () =>
     await runMessageAction({
       cfg,
       action,
@@ -146,22 +137,11 @@ export async function messageCommand(
         clientName: GATEWAY_CLIENT_NAMES.CLI,
         mode: GATEWAY_CLIENT_MODES.CLI,
       },
-      ...(forceGatewayAction ? { forceGatewayAction: true } : {}),
     });
 
   const json = opts.json === true;
   const dryRun = opts.dryRun === true;
   const needsSpinner = !json && !dryRun && (action === "send" || action === "poll");
-  const dispatch = async () => {
-    try {
-      return await run();
-    } catch (error) {
-      if (dryRun || !shouldRetryMessageActionThroughGateway(error)) {
-        throw error;
-      }
-      return await run(true);
-    }
-  };
 
   const result = needsSpinner
     ? await withProgress(
@@ -170,9 +150,9 @@ export async function messageCommand(
           indeterminate: true,
           enabled: true,
         },
-        dispatch,
+        run,
       )
-    : await dispatch();
+    : await run();
 
   if (json) {
     writeRuntimeJson(runtime, buildMessageCliJson(result));

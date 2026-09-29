@@ -28,14 +28,20 @@ function waitForChildLock(child: ReturnType<typeof spawn>): Promise<void> {
 }
 
 describe("Matrix crypto-store ownership across processes", () => {
-  it("rejects a second OS process before crypto state can be opened", async () => {
+  it("hands exclusive ownership to a waiting OS process", async () => {
     const snapshotPath = path.join(tempDirs.make("matrix-crypto-process-owner-"), "snapshot.json");
     const moduleUrl = pathToFileURL(
       path.resolve("extensions/matrix/src/matrix/sdk/crypto-store-ownership.ts"),
     ).href;
     const childScript = `
       const { acquireMatrixCryptoStoreOwnership } = await import(${JSON.stringify(moduleUrl)});
-      const ownership = await acquireMatrixCryptoStoreOwnership(${JSON.stringify(snapshotPath)});
+      let ownership;
+      ownership = await acquireMatrixCryptoStoreOwnership(${JSON.stringify(snapshotPath)}, {
+        onYieldRequested: () => {
+          process.stdout.write("YIELD\\n");
+          void ownership.release();
+        },
+      });
       process.stdout.write("LOCKED\\n");
       process.stdin.resume();
       await new Promise((resolve) => process.stdin.once("end", resolve));
@@ -52,10 +58,12 @@ describe("Matrix crypto-store ownership across processes", () => {
 
     try {
       await waitForChildLock(child);
-      await expect(acquireMatrixCryptoStoreOwnership(snapshotPath)).rejects.toMatchObject({
-        code: "matrix_crypto_store_owner_active",
-        retryViaGateway: true,
+      const yielded = new Promise<string>((resolve) => {
+        child.stdout?.once("data", (chunk) => resolve(String(chunk).trim()));
       });
+      const next = await acquireMatrixCryptoStoreOwnership(snapshotPath);
+      expect(await yielded).toBe("YIELD");
+      await next.release();
     } finally {
       child.stdin?.end();
       if (child.exitCode === null) {

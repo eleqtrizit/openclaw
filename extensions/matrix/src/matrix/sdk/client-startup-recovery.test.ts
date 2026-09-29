@@ -1,11 +1,12 @@
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { ClientEvent, type MatrixClient as MatrixJsClient } from "matrix-js-sdk/lib/matrix.js";
 import { SyncState } from "matrix-js-sdk/lib/sync.js";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MatrixClient } from "../sdk.js";
+
+const tempDirs = useAutoCleanupTempDirTracker((cleanup) => afterEach(cleanup));
 
 const fixture = vi.hoisted(() => ({
   init: vi.fn<MatrixJsClient["initRustCrypto"]>(),
@@ -123,7 +124,7 @@ describe("Matrix encrypted startup ownership", () => {
   );
 
   it("retains crypto-store ownership after a post-initialization abort", async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "matrix-crypto-owner-"));
+    const tempDir = tempDirs.make("matrix-crypto-owner-");
     const snapshotPath = path.join(tempDir, "crypto-idb-snapshot.json");
     const started = createDeferred<void>();
     const finish = createDeferred<void>();
@@ -149,17 +150,24 @@ describe("Matrix encrypted startup ownership", () => {
       abort.abort();
       finish.resolve();
       await expect(startup).rejects.toMatchObject({ name: "AbortError" });
-      await expect(replacement.prepareForOneOff()).rejects.toMatchObject({
-        code: "matrix_crypto_store_owner_active",
-        retryViaGateway: true,
+      const replacementStartup = replacement.prepareForOneOff();
+      let ready = false;
+      void replacementStartup.then(
+        () => {
+          ready = true;
+        },
+        () => undefined,
+      );
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 300);
       });
+      expect(ready).toBe(false);
       await owner.stopWithoutPersist();
-      await expect(replacement.prepareForOneOff()).resolves.toBeUndefined();
+      await expect(replacementStartup).rejects.toThrow("unresolved unsafe final state");
     } finally {
       finish.resolve();
       await startup.catch(() => undefined);
       await Promise.allSettled([owner.stopWithoutPersist(), replacement.stopWithoutPersist()]);
-      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
