@@ -265,8 +265,17 @@ export function cronMutationRequiresStreamExecAuthority(value: unknown): boolean
   );
 }
 
+function cronPatchClearsStreamRestartExhaustion(patch: Record<string, unknown>): boolean {
+  const state = isRecord(patch.state) ? patch.state : undefined;
+  return state?.streamRestartExhausted === false;
+}
+
 function cronUpdateNeedsCurrentJobForStreamAuthority(patch: Record<string, unknown>): boolean {
-  return patch.enabled === true || cronMutationRequiresStreamExecAuthority(patch);
+  return (
+    patch.enabled === true ||
+    cronPatchClearsStreamRestartExhaustion(patch) ||
+    cronMutationRequiresStreamExecAuthority(patch)
+  );
 }
 
 /** Whether this update authors or activates a stream source relative to stored state. */
@@ -287,11 +296,11 @@ export function cronUpdateRequiresStreamExecAuthority(
   const targetsStream =
     proposedScheduleKind === "stream" ||
     (proposedScheduleKind === undefined && currentScheduleKind === "stream");
-  const currentState = isRecord(currentJob.state) ? currentJob.state : undefined;
-  const activatesStoredStream =
-    patch.enabled === true &&
-    targetsStream &&
-    (currentJob.enabled === false || currentState?.streamRestartExhausted === true);
+  // Any explicit enable can clear exhaustion at commit time. Runtime state is
+  // not part of configRevision, so authorize this independent of the earlier
+  // state read to close the read/commit exhaustion race.
+  const activatesStoredStream = patch.enabled === true && targetsStream;
+  const recoversStoredStream = cronPatchClearsStreamRestartExhaustion(patch) && targetsStream;
   const replacementChangesStreamSource = (() => {
     if (proposedSchedule === undefined || !targetsStream) {
       return false;
@@ -306,7 +315,7 @@ export function cronUpdateRequiresStreamExecAuthority(
   })();
   const authorsStream =
     cronMutationRequiresStreamExecAuthority(patch) && replacementChangesStreamSource;
-  return activatesStoredStream || authorsStream;
+  return activatesStoredStream || recoversStoredStream || authorsStream;
 }
 
 function hasCronTriggerScript(value: unknown): boolean {

@@ -270,6 +270,48 @@ describe("cron stream creator exec policy", () => {
     ]);
   });
 
+  it("requires authority for state-only stream restart recovery", async () => {
+    const { tool, callGatewayTool } = createStreamTool({ tools: ["read"] });
+    callGatewayTool.mockImplementation(async (method: string) =>
+      method === "cron.get"
+        ? {
+            ...streamJob(),
+            id: "stream-1",
+            enabled: true,
+            state: { streamRestartExhausted: true },
+            configRevision: "revision-1",
+          }
+        : { ok: true },
+    );
+
+    await expect(
+      tool.execute("stream-state-recover-denied", {
+        action: "update",
+        jobId: "stream-1",
+        job: { state: { streamRestartExhausted: false } },
+      }),
+    ).rejects.toThrow("unattended full Gateway exec authority");
+    expect(callGatewayTool.mock.calls.map((call) => call[0])).toEqual(["cron.get"]);
+  });
+
+  it("requires authority for enabled true on an already enabled stream", async () => {
+    const { tool, callGatewayTool } = createStreamTool({ tools: ["read"] });
+    callGatewayTool.mockImplementation(async (method: string) =>
+      method === "cron.get"
+        ? { ...streamJob(), id: "stream-1", enabled: true, configRevision: "revision-1" }
+        : { ok: true },
+    );
+
+    await expect(
+      tool.execute("stream-enabled-race-denied", {
+        action: "update",
+        jobId: "stream-1",
+        job: { enabled: true },
+      }),
+    ).rejects.toThrow("unattended full Gateway exec authority");
+    expect(callGatewayTool.mock.calls.map((call) => call[0])).toEqual(["cron.get"]);
+  });
+
   it("requires authority to recover an enabled restart-exhausted stream", async () => {
     const { tool, callGatewayTool } = createStreamTool({ tools: ["read"] });
     callGatewayTool.mockImplementation(async (method: string) =>
@@ -294,7 +336,7 @@ describe("cron stream creator exec policy", () => {
     expect(callGatewayTool.mock.calls.map((call) => call[0])).toEqual(["cron.get"]);
   });
 
-  it("rechecks activation authority after a stale config revision", async () => {
+  it("rechecks source authority after a stale config revision", async () => {
     const { tool, callGatewayTool } = createStreamTool({ tools: ["read"] });
     let reads = 0;
     callGatewayTool.mockImplementation(async (method: string) => {
@@ -303,7 +345,11 @@ describe("cron stream creator exec policy", () => {
         return {
           ...streamJob(),
           id: "stream-1",
-          enabled: reads === 1,
+          enabled: true,
+          schedule:
+            reads === 1
+              ? streamJob().schedule
+              : { ...streamJob().schedule, mode: "match", match: "event" },
           configRevision: `revision-${reads}`,
         };
       }
@@ -319,10 +365,10 @@ describe("cron stream creator exec policy", () => {
     });
 
     await expect(
-      tool.execute("stream-enable-stale", {
+      tool.execute("stream-source-stale", {
         action: "update",
         jobId: "stream-1",
-        job: { enabled: true },
+        job: { schedule: streamJob().schedule },
       }),
     ).rejects.toThrow("unattended full Gateway exec authority");
     expect(callGatewayTool.mock.calls.map((call) => call[0])).toEqual([

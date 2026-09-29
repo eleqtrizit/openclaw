@@ -27,7 +27,7 @@ import {
   withGatewayToolCallerIdentity,
   withoutGatewayToolCallerIdentity,
 } from "./gateway-caller-context.js";
-import { callGatewayTool } from "./gateway.js";
+import { callGatewayTool, type GatewayCallOptions } from "./gateway.js";
 
 async function cliJson<T>(instance: OpenClawTestInstance, args: string[]): Promise<T> {
   const result = await instance.cli(
@@ -343,29 +343,70 @@ describe("cron stream agent authority final effects", () => {
         expect(Number(await fs.readFile(pidPath, "utf8"))).toBe(secondPid);
         process.kill(secondPid, 0);
 
+        const conflictSchedule = {
+          ...streamInput.schedule,
+          mode: "match" as const,
+          match: "event",
+        };
         let injectedConflict = false;
         const conflictCaller: GatewayToolCaller = async (method, opts, params, extra) => {
           if (method === "cron.update" && !injectedConflict) {
             injectedConflict = true;
             await callGatewayTool("cron.update", opts, {
               id: created.id,
-              patch: { enabled: false },
+              patch: { schedule: conflictSchedule },
             });
           }
           return await callGatewayTool(method, opts, params, extra);
         };
         const staleWeak = createWeakTool({ callGatewayTool: conflictCaller });
         await expect(
-          staleWeak.execute("stale-enable", {
+          staleWeak.execute("stale-source-resave", {
+            action: "update",
+            ...toolArgs(instance),
+            jobId: created.id,
+            job: { schedule: streamInput.schedule },
+          }),
+        ).rejects.toThrow("unattended full Gateway exec authority");
+        const thirdPid = await waitForPid(pidPath, secondPid);
+        expect(injectedConflict).toBe(true);
+        expect((await cliJson<CronJob>(instance, ["cron", "get", created.id])).schedule).toEqual(
+          conflictSchedule,
+        );
+
+        const exhaustionRaceGatewayMethods: string[] = [];
+        let injectedExhaustion = false;
+        const exhaustionRaceCaller: GatewayToolCaller = async <T = Record<string, unknown>>(
+          method: string,
+          opts: GatewayCallOptions,
+          params?: unknown,
+          extra?: Parameters<typeof callGatewayTool>[3],
+        ): Promise<T> => {
+          exhaustionRaceGatewayMethods.push(method);
+          const result = await callGatewayTool<T>(method, opts, params, extra);
+          if (method === "cron.get" && !injectedExhaustion) {
+            injectedExhaustion = true;
+            await callGatewayTool("cron.update", opts, {
+              id: created.id,
+              patch: { state: { streamRestartExhausted: true } },
+            });
+          }
+          return result;
+        };
+        const exhaustionRaceWeak = createWeakTool({ callGatewayTool: exhaustionRaceCaller });
+        await expect(
+          exhaustionRaceWeak.execute("denied-exhaustion-race-enable", {
             action: "update",
             ...toolArgs(instance),
             jobId: created.id,
             job: { enabled: true },
           }),
         ).rejects.toThrow("unattended full Gateway exec authority");
-        await waitForDead(secondPid);
-        expect(injectedConflict).toBe(true);
-        expect((await cliJson<CronJob>(instance, ["cron", "get", created.id])).enabled).toBe(false);
+        expect(exhaustionRaceGatewayMethods).toEqual(["cron.get"]);
+        await waitForDead(thirdPid);
+        const racedExhausted = await cliJson<CronJob>(instance, ["cron", "get", created.id]);
+        expect(racedExhausted.state.streamRestartExhausted).toBe(true);
+        expect(Number(await fs.readFile(pidPath, "utf8"))).toBe(thirdPid);
 
         await instance.stopGateway();
         seedRestartExhaustedStream(instance, created.id);
@@ -373,7 +414,24 @@ describe("cron stream agent authority final effects", () => {
         const exhausted = await cliJson<CronJob>(instance, ["cron", "get", created.id]);
         expect(exhausted.enabled).toBe(true);
         expect(exhausted.state.streamRestartExhausted).toBe(true);
-        expect(Number(await fs.readFile(pidPath, "utf8"))).toBe(secondPid);
+        expect(Number(await fs.readFile(pidPath, "utf8"))).toBe(thirdPid);
+
+        const stateRecoveryGatewayMethods: string[] = [];
+        const stateRecoveryWeak = createWeakTool({
+          callGatewayTool: async (method, opts, params, extra) => {
+            stateRecoveryGatewayMethods.push(method);
+            return await callGatewayTool(method, opts, params, extra);
+          },
+        });
+        await expect(
+          stateRecoveryWeak.execute("denied-state-only-recovery", {
+            action: "update",
+            ...toolArgs(instance),
+            jobId: created.id,
+            job: { state: { streamRestartExhausted: false } },
+          }),
+        ).rejects.toThrow("unattended full Gateway exec authority");
+        expect(stateRecoveryGatewayMethods).toEqual(["cron.get"]);
 
         await expect(
           weak.execute("denied-exhausted-recovery", {
@@ -386,7 +444,7 @@ describe("cron stream agent authority final effects", () => {
         const stillExhausted = await cliJson<CronJob>(instance, ["cron", "get", created.id]);
         expect(stillExhausted.enabled).toBe(true);
         expect(stillExhausted.state.streamRestartExhausted).toBe(true);
-        expect(Number(await fs.readFile(pidPath, "utf8"))).toBe(secondPid);
+        expect(Number(await fs.readFile(pidPath, "utf8"))).toBe(thirdPid);
       },
       async () => {
         env.restore();
