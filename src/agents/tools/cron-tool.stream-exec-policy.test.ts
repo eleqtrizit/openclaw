@@ -184,6 +184,31 @@ describe("cron stream creator exec policy", () => {
     expect(callGatewayTool.mock.calls.map((call) => call[0])).toEqual(["cron.get", "cron.update"]);
   });
 
+  it("rejects a same-command stream replacement that omits stored cwd", async () => {
+    const { tool, callGatewayTool } = createStreamTool({ tools: ["read"] });
+    callGatewayTool.mockImplementation(async (method: string) =>
+      method === "cron.get"
+        ? {
+            ...streamJob(),
+            id: "stream-1",
+            enabled: true,
+            schedule: { ...streamJob().schedule, cwd: "/workspace" },
+            configRevision: "revision-1",
+          }
+        : { ok: true },
+    );
+
+    await expect(
+      tool.execute("stream-omit-cwd-denied", {
+        action: "update",
+        jobId: "stream-1",
+        job: { schedule: streamJob().schedule },
+      }),
+    ).rejects.toThrow("unattended full Gateway exec authority");
+
+    expect(callGatewayTool.mock.calls.map((call) => call[0])).toEqual(["cron.get"]);
+  });
+
   it("allows enabling a disabled stream while replacing it with a non-stream schedule", async () => {
     const { tool, callGatewayTool } = createStreamTool({ tools: ["read"] });
     callGatewayTool.mockImplementation(async (method: string) =>

@@ -222,7 +222,11 @@ describe("cron stream agent authority final effects", () => {
         ].join("");
         const streamInput = {
           name: "agent authority stream",
-          schedule: { kind: "stream" as const, command: [process.execPath, "-e", source] },
+          schedule: {
+            kind: "stream" as const,
+            command: [process.execPath, "-e", source],
+            cwd: instance.state.workspaceDir,
+          },
           sessionTarget: "isolated" as const,
           wakeMode: "now" as const,
           payload: { kind: "agentTurn" as const, message: "handle events" },
@@ -311,6 +315,33 @@ describe("cron stream agent authority final effects", () => {
         });
         const secondPid = await waitForPid(pidPath, firstPid);
         expect((await cliJson<CronJob>(instance, ["cron", "get", created.id])).enabled).toBe(true);
+
+        const omittedFieldGatewayMethods: string[] = [];
+        const omittedFieldWeak = createWeakTool({
+          callGatewayTool: async (method, opts, params, extra) => {
+            omittedFieldGatewayMethods.push(method);
+            return await callGatewayTool(method, opts, params, extra);
+          },
+        });
+        await expect(
+          omittedFieldWeak.execute("denied-omitted-cwd", {
+            action: "update",
+            ...toolArgs(instance),
+            jobId: created.id,
+            job: {
+              schedule: { kind: "stream", command: streamInput.schedule.command },
+            },
+          }),
+        ).rejects.toThrow("unattended full Gateway exec authority");
+        expect(omittedFieldGatewayMethods).toEqual(["cron.get"]);
+        const afterOmittedFieldDenial = await cliJson<CronJob>(instance, [
+          "cron",
+          "get",
+          created.id,
+        ]);
+        expect(afterOmittedFieldDenial.schedule).toEqual(streamInput.schedule);
+        expect(Number(await fs.readFile(pidPath, "utf8"))).toBe(secondPid);
+        process.kill(secondPid, 0);
 
         let injectedConflict = false;
         const conflictCaller: GatewayToolCaller = async (method, opts, params, extra) => {

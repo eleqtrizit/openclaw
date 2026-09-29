@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { cronStreamScheduleKey, type CronStreamSchedule } from "../../cron/stream-schedule.js";
 import { isRecord } from "../../utils.js";
 import { readCronScheduledToolProjection } from "../exec-tool-target-pinning.js";
 import { createToolPolicyMatcher } from "../tool-policy-match.js";
@@ -218,6 +219,21 @@ export function hasCronCreatorGatewayExecTool(
   );
 }
 
+function isCronStreamSchedule(value: unknown): value is CronStreamSchedule {
+  if (
+    !isRecord(value) ||
+    typeof value.kind !== "string" ||
+    normalizeToolPolicyName(value.kind) !== "stream"
+  ) {
+    return false;
+  }
+  return (
+    Array.isArray(value.command) &&
+    value.command.length > 0 &&
+    value.command.every((entry): entry is string => typeof entry === "string")
+  );
+}
+
 export function cronCreateRequiresStreamExecAuthority(value: unknown): boolean {
   if (!isRecord(value)) {
     return false;
@@ -276,15 +292,20 @@ export function cronUpdateRequiresStreamExecAuthority(
     patch.enabled === true &&
     targetsStream &&
     (currentJob.enabled === false || currentState?.streamRestartExhausted === true);
-  const effectiveProposedSchedule =
-    proposedSchedule === undefined || currentSchedule === undefined
-      ? proposedSchedule
-      : { ...currentSchedule, ...proposedSchedule };
+  const replacementChangesStreamSource = (() => {
+    if (proposedSchedule === undefined || !targetsStream) {
+      return false;
+    }
+    if (proposedScheduleKind !== "stream" || currentScheduleKind !== "stream") {
+      return !isDeepStrictEqual(proposedSchedule, currentSchedule);
+    }
+    if (!isCronStreamSchedule(proposedSchedule) || !isCronStreamSchedule(currentSchedule)) {
+      return true;
+    }
+    return cronStreamScheduleKey(proposedSchedule) !== cronStreamScheduleKey(currentSchedule);
+  })();
   const authorsStream =
-    proposedSchedule !== undefined &&
-    targetsStream &&
-    cronMutationRequiresStreamExecAuthority(patch) &&
-    !isDeepStrictEqual(effectiveProposedSchedule, currentSchedule);
+    cronMutationRequiresStreamExecAuthority(patch) && replacementChangesStreamSource;
   return activatesStoredStream || authorsStream;
 }
 

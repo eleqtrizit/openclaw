@@ -65,7 +65,7 @@ describe("cron tool creator cap", () => {
     ).toBe(true);
   });
 
-  it("does not reauthorize an unchanged partial stream schedule", () => {
+  it("uses Gateway replacement semantics for stream schedule updates", () => {
     const current = {
       enabled: true,
       schedule: { kind: "stream", command: ["node", "events.mjs"], cwd: "/workspace" },
@@ -73,10 +73,22 @@ describe("cron tool creator cap", () => {
 
     expect(
       cronUpdateRequiresStreamExecAuthority(
-        { schedule: { command: ["node", "events.mjs"] } },
+        {
+          schedule: {
+            kind: "stream",
+            command: ["node", "events.mjs"],
+            cwd: "/workspace",
+          },
+        },
         current,
       ),
     ).toBe(false);
+    expect(
+      cronUpdateRequiresStreamExecAuthority(
+        { schedule: { kind: "stream", command: ["node", "events.mjs"] } },
+        current,
+      ),
+    ).toBe(true);
     expect(
       cronUpdateRequiresStreamExecAuthority(
         { schedule: { command: ["node", "replacement.mjs"] } },
