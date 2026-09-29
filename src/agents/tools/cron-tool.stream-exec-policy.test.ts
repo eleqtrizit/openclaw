@@ -184,6 +184,31 @@ describe("cron stream creator exec policy", () => {
     expect(callGatewayTool.mock.calls.map((call) => call[0])).toEqual(["cron.get", "cron.update"]);
   });
 
+  it("allows enabling a disabled stream while replacing it with a non-stream schedule", async () => {
+    const { tool, callGatewayTool } = createStreamTool({ tools: ["read"] });
+    callGatewayTool.mockImplementation(async (method: string) =>
+      method === "cron.get"
+        ? { ...streamJob(), id: "stream-1", enabled: false, configRevision: "revision-1" }
+        : { ok: true },
+    );
+
+    await tool.execute("stream-replace-and-enable", {
+      action: "update",
+      jobId: "stream-1",
+      job: { enabled: true, schedule: { kind: "every", everyMs: 60_000 } },
+    });
+
+    expect(callGatewayTool.mock.calls.map((call) => call[0])).toEqual(["cron.get", "cron.update"]);
+    expect(callGatewayTool).toHaveBeenLastCalledWith(
+      "cron.update",
+      expect.anything(),
+      expect.objectContaining({
+        id: "stream-1",
+        patch: { enabled: true, schedule: { kind: "every", everyMs: 60_000 } },
+      }),
+    );
+  });
+
   it("requires full Gateway exec authority to re-enable a stored stream", async () => {
     const weak = createStreamTool({ tools: ["read"] });
     weak.callGatewayTool.mockImplementation(async (method: string) =>

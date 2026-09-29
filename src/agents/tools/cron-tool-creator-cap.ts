@@ -264,11 +264,6 @@ export function cronUpdateRequiresStreamExecAuthority(
     typeof currentSchedule?.kind === "string"
       ? normalizeToolPolicyName(currentSchedule.kind)
       : undefined;
-  const currentState = isRecord(currentJob.state) ? currentJob.state : undefined;
-  const activatesStoredStream =
-    patch.enabled === true &&
-    currentScheduleKind === "stream" &&
-    (currentJob.enabled === false || currentState?.streamRestartExhausted === true);
   const proposedScheduleKind =
     typeof proposedSchedule?.kind === "string"
       ? normalizeToolPolicyName(proposedSchedule.kind)
@@ -276,6 +271,11 @@ export function cronUpdateRequiresStreamExecAuthority(
   const targetsStream =
     proposedScheduleKind === "stream" ||
     (proposedScheduleKind === undefined && currentScheduleKind === "stream");
+  const currentState = isRecord(currentJob.state) ? currentJob.state : undefined;
+  const activatesStoredStream =
+    patch.enabled === true &&
+    targetsStream &&
+    (currentJob.enabled === false || currentState?.streamRestartExhausted === true);
   const effectiveProposedSchedule =
     proposedSchedule === undefined || currentSchedule === undefined
       ? proposedSchedule
