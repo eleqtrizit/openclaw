@@ -545,6 +545,25 @@ describe("monitorTlonProvider production-path sender authentication", () => {
         accountId: "default",
         stateDir,
       });
+      const legacyDmEvent = {
+        whom: "nec",
+        id: "legacy-bare-owner-dm",
+        response: {
+          add: {
+            essay: { author: "nec", content: [{ inline: ["queued hello"] }], sent: 1 },
+          },
+        },
+      };
+      const legacyDmPayload = {
+        version: 1 as const,
+        receivedAt: 1,
+        source: "chat" as const,
+        rawEvent: JSON.stringify(legacyDmEvent),
+      };
+      await queue.enqueue("legacy-bare-owner-dm", legacyDmPayload, {
+        receivedAt: 1,
+        laneKey: "direct:nec",
+      });
       const legacyClubEvent = {
         whom: "0v3.q4n5m.6r7s8.9t0u1.2v3w4",
         id: "legacy-club-forged-owner",
@@ -652,7 +671,13 @@ describe("monitorTlonProvider production-path sender authentication", () => {
           "failed",
         );
       });
-      expect(inboundRuntimeMock.dispatch).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(inboundRuntimeMock.dispatch).toHaveBeenCalledOnce());
+      expect(buildChannelInboundEnvelopeMock).toHaveBeenCalledWith({
+        channel: "Tlon",
+        from: "~nec [owner]",
+        timestamp: 1,
+        body: "queued hello",
+      });
       await vi.waitFor(() => {
         expect(subscriptions).toEqual(
           expect.arrayContaining([
@@ -681,7 +706,7 @@ describe("monitorTlonProvider production-path sender authentication", () => {
           add: { essay: { author: "~nec", content: [{ inline: ["hello"] }], sent: 2 } },
         },
       });
-      await vi.waitFor(() => expect(inboundRuntimeMock.dispatch).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(inboundRuntimeMock.dispatch).toHaveBeenCalledTimes(2));
       expect(buildChannelInboundEnvelopeMock).toHaveBeenCalledWith({
         channel: "Tlon",
         from: "~nec [owner]",
@@ -703,7 +728,7 @@ describe("monitorTlonProvider production-path sender authentication", () => {
           "[tlon] Ignoring chat event without an authenticated DM partner",
         ),
       );
-      expect(inboundRuntimeMock.dispatch).toHaveBeenCalledOnce();
+      expect(inboundRuntimeMock.dispatch).toHaveBeenCalledTimes(2);
       expect((await queue.listPending({ limit: "all" })).map((record) => record.id)).not.toContain(
         "live-club-forged-owner",
       );
