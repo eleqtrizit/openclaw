@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CliBackendToolPermissionResult } from "../../plugins/cli-backend.types.js";
 import {
@@ -208,6 +209,41 @@ describe("plugin-owned CLI native tool policy", () => {
       });
     },
   );
+  it("binds relative native file paths to the request cwd and rejects unbound paths", async () => {
+    const workspaceDir = path.join(process.cwd(), "native-policy-workspace");
+    const outsideCwd = path.join(process.cwd(), "native-policy-outside");
+    const { context } = await createExecution({
+      config: {
+        tools: {
+          profile: "full",
+          fs: { workspaceOnly: true },
+          exec: { security: "full", ask: "off" },
+        },
+      },
+      nativeTools: ["Write"],
+      workspaceDir,
+    });
+    const request = { toolName: "Write", toolInput: { file_path: "effect.txt" } };
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        execution.requestToolPermission({ ...request, cwd: workspaceDir }),
+      ).resolves.toMatchObject({ behavior: "allow" });
+      await expect(
+        execution.requestToolPermission({ ...request, cwd: outsideCwd }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: expect.stringMatching(/^Path escapes sandbox root/),
+      });
+      await expect(execution.requestToolPermission(request)).resolves.toEqual({
+        behavior: "deny",
+        message:
+          "OpenClaw denied native file tool use: relative file path requires an absolute native cwd.",
+      });
+      yield SUCCESS_RESULT;
+    });
+  });
+
   it("uses the admitted turn policy when a warm transport retains a retired generation", async () => {
     const oldHook = vi.fn();
     const previous = createMockPluginRegistry([

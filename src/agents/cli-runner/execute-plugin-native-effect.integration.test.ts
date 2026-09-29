@@ -33,12 +33,16 @@ async function runNativeWrite(params: {
   modelProvider?: string;
   runtimePolicySessionKey?: string;
   rewritePath?: string;
+  relativePath?: boolean;
+  useOutsideCwd?: boolean;
 }) {
   const root = await mkdtemp(path.join(os.tmpdir(), "openclaw-native-policy-proof-"));
   roots.push(root);
   const workspace = path.join(root, "workspace");
   await mkdir(workspace);
-  const target = path.join(workspace, "native-effect.txt");
+  const nativeCwd = params.useOutsideCwd ? path.join(root, "outside") : workspace;
+  await mkdir(nativeCwd, { recursive: true });
+  const target = path.join(nativeCwd, "native-effect.txt");
   if (params.rewritePath) {
     const rewritePath = params.rewritePath;
     const handler: PluginHookHandlerMap["before_tool_call"] = async (event) => ({
@@ -62,13 +66,17 @@ async function runNativeWrite(params: {
   context.params.modelProvider = params.modelProvider;
   context.params.runtimePolicySessionKey = params.runtimePolicySessionKey;
   let decision: CliBackendToolPermissionResult | undefined;
-  const input = { file_path: target, content: "native effect\n" };
+  const input = {
+    file_path: params.relativePath ? path.basename(target) : target,
+    content: "native effect\n",
+  };
 
   const exit = await runPlugin(context, async function* (execution) {
     decision = await execution.requestToolPermission({
       toolName: "Write",
       toolInput: input,
       toolCallId: "process-backed-native-write",
+      cwd: nativeCwd,
       abortSignal: execution.abortSignal,
     });
     if (decision.behavior === "allow") {
@@ -80,7 +88,7 @@ async function runNativeWrite(params: {
           "const fs=require('node:fs');const i=JSON.parse(process.argv[1]);fs.writeFileSync(i.file_path,i.content)",
           JSON.stringify(finalInput),
         ],
-        { cwd: workspace },
+        { cwd: nativeCwd },
       );
     }
     yield SUCCESS_RESULT;
@@ -102,6 +110,7 @@ describe("process-backed native CLI final-effect policy", () => {
           exec: { security: "full", ask: "off" },
         },
       },
+      relativePath: true,
     });
     expect(await readFile(allowed.target, "utf8")).toBe("native effect\n");
     expect(allowed.decision).toMatchObject({ behavior: "allow" });
@@ -142,6 +151,25 @@ describe("process-backed native CLI final-effect policy", () => {
     const proof = await runNativeWrite(testCase);
     await expectMissing(proof.target);
     expect(proof.decision).toMatchObject({ behavior: "deny" });
+  });
+
+  it("denies a relative native path resolved from the client's outside cwd", async () => {
+    const proof = await runNativeWrite({
+      config: {
+        tools: {
+          profile: "full",
+          fs: { workspaceOnly: true },
+          exec: { security: "full", ask: "off" },
+        },
+      },
+      relativePath: true,
+      useOutsideCwd: true,
+    });
+    await expectMissing(proof.target);
+    expect(proof.decision).toEqual({
+      behavior: "deny",
+      message: expect.stringMatching(/^Path escapes sandbox root/),
+    });
   });
 
   it("denies a hook-rewritten outside-workspace path before native I/O", async () => {

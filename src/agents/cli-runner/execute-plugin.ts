@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import path from "node:path";
 import { stripSystemPromptCacheBoundary } from "@openclaw/ai/internal/shared";
 import { clampPositiveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
@@ -64,13 +65,20 @@ function createPluginToolPermissionHandler(params: {
   const run = params.context.params;
   const { permission, policySessionKey, policyAgentId, effectiveToolPolicies, fsWorkspaceOnly } =
     resolveCliNativeToolPolicy(params.context);
-  const assertNativeFilePath = async (filePath: string) => {
+  const preparedCwd = params.context.cwd ?? params.context.workspaceDir;
+  const assertNativeFilePath = async (filePath: string, nativeCwd?: string) => {
     if (!fsWorkspaceOnly) {
       return;
     }
+    const cwd = nativeCwd?.trim();
+    if (!path.isAbsolute(filePath) && (!cwd || !path.isAbsolute(cwd))) {
+      throw new Error(
+        "OpenClaw denied native file tool use: relative file path requires an absolute native cwd.",
+      );
+    }
     await assertSandboxPath({
       filePath,
-      cwd: params.context.cwd ?? params.context.workspaceDir,
+      cwd: cwd && path.isAbsolute(cwd) ? cwd : preparedCwd,
       root: params.context.workspaceDir,
     });
   };
@@ -115,7 +123,7 @@ function createPluginToolPermissionHandler(params: {
         return denyTool("OpenClaw denied native file tool use: conflicting file paths.");
       }
       try {
-        await assertNativeFilePath(nativePath);
+        await assertNativeFilePath(nativePath, request.cwd);
       } catch (error) {
         return denyTool(error instanceof Error ? error.message : String(error));
       }
@@ -155,7 +163,7 @@ function createPluginToolPermissionHandler(params: {
       ctx: {
         ...(policyAgentId ? { agentId: policyAgentId } : {}),
         ...(run.config ? { config: run.config } : {}),
-        cwd: params.context.cwd ?? params.context.workspaceDir,
+        cwd: request.cwd?.trim() || preparedCwd,
         workspaceDir: params.context.workspaceDir,
         ...(policySessionKey ? { sessionKey: policySessionKey } : {}),
         sessionId: run.sessionId,
@@ -194,7 +202,7 @@ function createPluginToolPermissionHandler(params: {
         return denyTool("OpenClaw denied native file tool use: invalid rewritten file path.");
       }
       try {
-        await assertNativeFilePath(toolInput.path);
+        await assertNativeFilePath(toolInput.path, request.cwd);
       } catch (error) {
         return denyTool(error instanceof Error ? error.message : String(error));
       }
