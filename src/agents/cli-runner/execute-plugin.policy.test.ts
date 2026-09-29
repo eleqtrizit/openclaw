@@ -235,6 +235,12 @@ describe("plugin-owned CLI native tool policy", () => {
         behavior: "deny",
         message: expect.stringMatching(/^Path escapes sandbox root/),
       });
+      await expect(
+        execution.requestToolPermission({ ...request, cwd: `${workspaceDir} ` }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: expect.stringMatching(/^Path escapes sandbox root/),
+      });
       await expect(execution.requestToolPermission(request)).resolves.toEqual({
         behavior: "deny",
         message:

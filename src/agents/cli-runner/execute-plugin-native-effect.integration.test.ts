@@ -35,12 +35,15 @@ async function runNativeWrite(params: {
   rewritePath?: string;
   relativePath?: boolean;
   useOutsideCwd?: boolean;
+  nativeCwdSuffix?: string;
 }) {
   const root = await mkdtemp(path.join(os.tmpdir(), "openclaw-native-policy-proof-"));
   roots.push(root);
   const workspace = path.join(root, "workspace");
   await mkdir(workspace);
-  const nativeCwd = params.useOutsideCwd ? path.join(root, "outside") : workspace;
+  const nativeCwd = params.useOutsideCwd
+    ? path.join(root, "outside")
+    : `${workspace}${params.nativeCwdSuffix ?? ""}`;
   await mkdir(nativeCwd, { recursive: true });
   const target = path.join(nativeCwd, "native-effect.txt");
   if (params.rewritePath) {
@@ -164,6 +167,25 @@ describe("process-backed native CLI final-effect policy", () => {
       },
       relativePath: true,
       useOutsideCwd: true,
+    });
+    await expectMissing(proof.target);
+    expect(proof.decision).toEqual({
+      behavior: "deny",
+      message: expect.stringMatching(/^Path escapes sandbox root/),
+    });
+  });
+
+  it("denies a relative native path from a whitespace-suffixed sibling cwd", async () => {
+    const proof = await runNativeWrite({
+      config: {
+        tools: {
+          profile: "full",
+          fs: { workspaceOnly: true },
+          exec: { security: "full", ask: "off" },
+        },
+      },
+      relativePath: true,
+      nativeCwdSuffix: " ",
     });
     await expectMissing(proof.target);
     expect(proof.decision).toEqual({

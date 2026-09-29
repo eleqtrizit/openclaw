@@ -70,7 +70,7 @@ function createPluginToolPermissionHandler(params: {
     if (!fsWorkspaceOnly) {
       return;
     }
-    const cwd = nativeCwd?.trim();
+    const cwd = nativeCwd;
     if (!path.isAbsolute(filePath) && (!cwd || !path.isAbsolute(cwd))) {
       throw new Error(
         "OpenClaw denied native file tool use: relative file path requires an absolute native cwd.",
@@ -163,7 +163,7 @@ function createPluginToolPermissionHandler(params: {
       ctx: {
         ...(policyAgentId ? { agentId: policyAgentId } : {}),
         ...(run.config ? { config: run.config } : {}),
-        cwd: request.cwd?.trim() || preparedCwd,
+        cwd: request.cwd ?? preparedCwd,
         workspaceDir: params.context.workspaceDir,
         ...(policySessionKey ? { sessionKey: policySessionKey } : {}),
         sessionId: run.sessionId,
@@ -254,7 +254,7 @@ function createPluginToolPermissionHandler(params: {
         toolInput,
         pluginId: params.context.backendResolved.id,
         sessionKey: run.sessionKey,
-        agentId: run.agentId,
+        agentId: policyAgentId,
         toolCallId: request.toolCallId,
         cwd: request.cwd,
         fallbackCwd: params.context.cwd ?? params.context.workspaceDir,
@@ -263,7 +263,7 @@ function createPluginToolPermissionHandler(params: {
           ...params.env,
           PATH: mergePathPrepend(
             params.env.PATH,
-            resolveExecToolConfig({ cfg: run.config, agentId: run.agentId }).pathPrepend ?? [],
+            resolveExecToolConfig({ cfg: run.config, agentId: policyAgentId }).pathPrepend ?? [],
           ),
         },
         assertActive,
