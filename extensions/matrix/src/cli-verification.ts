@@ -130,6 +130,8 @@ function registerMatrixVerificationSummaryCommand(
       options: MatrixVerificationCommandOptions,
     ) => void;
     configure?: (command: Command) => void;
+    gatewayOperation: string;
+    gatewayParams?: (options: MatrixVerificationCommandOptions) => Record<string, unknown>;
     errorPrefix: string;
   },
 ): void {
@@ -147,11 +149,23 @@ function registerMatrixVerificationSummaryCommand(
       const { accountId, cfg } = cli.resolveMatrixCliAccountContext(options.account);
       await cli.runMatrixCliCommand(options, {
         run: () =>
-          params.run(
-            id,
-            { accountId, cfg, ...matrixCliVerificationDmLookupOptions(options) },
-            options,
-          ),
+          cli.runMatrixCliOwnerAction({
+            accountId,
+            operation: params.gatewayOperation,
+            actionParams: {
+              requestId: id,
+              userId: options.userId,
+              roomId: options.roomId,
+              ...params.gatewayParams?.(options),
+            },
+            resultField: "verification",
+            runLocal: () =>
+              params.run(
+                id,
+                { accountId, cfg, ...matrixCliVerificationDmLookupOptions(options) },
+                options,
+              ),
+          }),
         onText: (summary) => {
           cli.printAccountLabel(accountId);
           cli.printMatrixVerificationSummary(summary);
@@ -225,7 +239,13 @@ export function registerMatrixVerificationCommands(root: Command): void {
     .action(async (options: cli.MatrixCliOptions) => {
       const { accountId, cfg } = cli.resolveMatrixCliAccountContext(options.account);
       await cli.runMatrixCliCommand(options, {
-        run: async () => await verification.listMatrixVerifications({ accountId, cfg }),
+        run: async () =>
+          await cli.runMatrixCliOwnerAction({
+            accountId,
+            operation: "verification-list",
+            resultField: "verifications",
+            runLocal: async () => await verification.listMatrixVerifications({ accountId, cfg }),
+          }),
         onText: (summaries) => {
           cli.printAccountLabel(accountId);
           cli.printMatrixVerificationSummaries(summaries);
@@ -272,13 +292,19 @@ export function registerMatrixVerificationCommands(root: Command): void {
                 "--own-user cannot be combined with --user-id, --device-id, or --room-id",
               );
             }
-            return await verification.requestMatrixVerification({
-              accountId,
-              cfg,
+            const actionParams = {
               ownUser: options.ownUser === true ? true : undefined,
               userId: options.userId,
               deviceId: options.deviceId,
               roomId: options.roomId,
+            };
+            return await cli.runMatrixCliOwnerAction({
+              accountId,
+              operation: "verification-request",
+              actionParams,
+              resultField: "verification",
+              runLocal: async () =>
+                await verification.requestMatrixVerification({ accountId, cfg, ...actionParams }),
             });
           },
           onText: (summary) => {
@@ -295,6 +321,7 @@ export function registerMatrixVerificationCommands(root: Command): void {
     name: "accept",
     description: "Accept an inbound Matrix verification request",
     run: (id, target) => verification.acceptMatrixVerification(id, target),
+    gatewayOperation: "verification-accept",
     afterText: (summary, accountId, options) => {
       const requestId = formatMatrixVerificationCommandId(summary);
       const dmParts = formatMatrixVerificationPreferredDmFollowupParts(summary, options);
@@ -309,6 +336,8 @@ export function registerMatrixVerificationCommands(root: Command): void {
     name: "start",
     description: "Start SAS verification for a Matrix verification request",
     run: (id, target) => verification.startMatrixVerification(id, { ...target, method: "sas" }),
+    gatewayOperation: "verification-start",
+    gatewayParams: () => ({ method: "sas" }),
     afterText: (summary, accountId, options) =>
       printMatrixVerificationSasGuidance(
         formatMatrixVerificationCommandId(summary),
@@ -330,10 +359,17 @@ export function registerMatrixVerificationCommands(root: Command): void {
       const { accountId, cfg } = cli.resolveMatrixCliAccountContext(options.account);
       await cli.runMatrixCliCommand(options, {
         run: async () =>
-          await verification.getMatrixVerificationSas(id, {
+          await cli.runMatrixCliOwnerAction({
             accountId,
-            cfg,
-            ...matrixCliVerificationDmLookupOptions(options),
+            operation: "verification-sas",
+            actionParams: { requestId: id, userId: options.userId, roomId: options.roomId },
+            resultField: "sas",
+            runLocal: async () =>
+              await verification.getMatrixVerificationSas(id, {
+                accountId,
+                cfg,
+                ...matrixCliVerificationDmLookupOptions(options),
+              }),
           }),
         onText: (sas) => {
           const requestId = cli.formatMatrixCliText(id);
@@ -354,6 +390,7 @@ export function registerMatrixVerificationCommands(root: Command): void {
     name: "confirm-sas",
     description: "Confirm matching SAS emoji or decimals for a Matrix verification request",
     run: (id, target) => verification.confirmMatrixVerificationSas(id, target),
+    gatewayOperation: "verification-confirm",
     errorPrefix: "Verification SAS confirm failed",
   });
 
@@ -361,6 +398,7 @@ export function registerMatrixVerificationCommands(root: Command): void {
     name: "mismatch-sas",
     description: "Reject a Matrix SAS verification when the emoji or decimals do not match",
     run: (id, target) => verification.mismatchMatrixVerificationSas(id, target),
+    gatewayOperation: "verification-mismatch",
     errorPrefix: "Verification SAS mismatch failed",
   });
 
@@ -378,6 +416,8 @@ export function registerMatrixVerificationCommands(root: Command): void {
         reason: options.reason,
         code: options.code,
       }),
+    gatewayOperation: "verification-cancel",
+    gatewayParams: (options) => ({ reason: options.reason, code: options.code }),
     errorPrefix: "Verification cancel failed",
   });
 
@@ -401,13 +441,24 @@ export function registerMatrixVerificationCommands(root: Command): void {
       ) => {
         const { accountId, cfg } = cli.resolveMatrixCliAccountContext(options.account);
         await cli.runMatrixCliCommand(options, {
-          run: async () =>
-            await verification.getMatrixVerificationStatus({
+          run: async () => {
+            const includeRecoveryKey = options.includeRecoveryKey === true;
+            return await cli.runMatrixCliOwnerAction({
               accountId,
-              cfg,
-              includeRecoveryKey: options.includeRecoveryKey === true,
-              ...(options.allowDegradedLocalState === true ? { readiness: "none" as const } : {}),
-            }),
+              operation: "verification-status",
+              actionParams: { includeRecoveryKey },
+              resultField: "status",
+              runLocal: async () =>
+                await verification.getMatrixVerificationStatus({
+                  accountId,
+                  cfg,
+                  includeRecoveryKey,
+                  ...(options.allowDegradedLocalState === true
+                    ? { readiness: "none" as const }
+                    : {}),
+                }),
+            });
+          },
           onText: (status, verbose) => {
             cli.printAccountLabel(accountId);
             cli.printVerificationStatus(status, verbose, accountId);

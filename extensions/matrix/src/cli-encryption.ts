@@ -76,10 +76,16 @@ async function setupMatrixEncryption(params: {
   const canUseExistingBootstrap =
     !encryptionChanged && !params.recoveryKey && params.forceResetCrossSigning !== true;
   const existingStatus = canUseExistingBootstrap
-    ? await verificationActions.getMatrixVerificationStatus({
+    ? await cli.runMatrixCliOwnerAction({
         accountId,
-        cfg: updated,
-        readiness: "none",
+        operation: "verification-status",
+        resultField: "status",
+        runLocal: async () =>
+          await verificationActions.getMatrixVerificationStatus({
+            accountId,
+            cfg: updated,
+            readiness: "none",
+          }),
       })
     : null;
   if (existingStatus && isMatrixVerificationSetupComplete(existingStatus)) {
@@ -93,15 +99,26 @@ async function setupMatrixEncryption(params: {
   }
 
   try {
-    const bootstrap = await verificationActions.bootstrapMatrixVerification({
+    const forceResetCrossSigning = params.forceResetCrossSigning === true;
+    const bootstrap = await cli.runMatrixCliOwnerAction({
       accountId,
-      cfg: updated,
-      recoveryKey: params.recoveryKey,
-      forceResetCrossSigning: params.forceResetCrossSigning === true,
+      operation: "verification-bootstrap",
+      actionParams: { recoveryKey: params.recoveryKey, forceResetCrossSigning },
+      resultField: "result",
+      runLocal: async () =>
+        await verificationActions.bootstrapMatrixVerification({
+          accountId,
+          cfg: updated,
+          recoveryKey: params.recoveryKey,
+          forceResetCrossSigning,
+        }),
     });
-    const status = await verificationActions.getMatrixVerificationStatus({
+    const status = await cli.runMatrixCliOwnerAction({
       accountId,
-      cfg: updated,
+      operation: "verification-status",
+      resultField: "status",
+      runLocal: async () =>
+        await verificationActions.getMatrixVerificationStatus({ accountId, cfg: updated }),
     });
 
     return {

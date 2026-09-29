@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import { callGatewayFromCli } from "openclaw/plugin-sdk/gateway-runtime";
 import { parseStrictInteger } from "openclaw/plugin-sdk/number-runtime";
 import { readByteStreamWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
 import {
@@ -22,6 +23,71 @@ import type { CoreConfig } from "./types.js";
 
 let matrixCliExitScheduled = false;
 const MATRIX_CLI_RECOVERY_KEY_STDIN_MAX_BYTES = 1024 * 1024;
+const MATRIX_CRYPTO_STORE_OWNER_ACTIVE_ERROR_CODE = "matrix_crypto_store_owner_active";
+
+type MatrixOwnerActionResponse = Record<string, unknown>;
+
+function isMatrixCryptoStoreOwnerActiveError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === MATRIX_CRYPTO_STORE_OWNER_ACTIVE_ERROR_CODE
+  );
+}
+
+function readMatrixOwnerActionField(response: unknown, field: string): unknown {
+  if (!response || typeof response !== "object") {
+    throw new Error("Matrix Gateway owner returned an invalid response");
+  }
+  // SAFETY: the object check above narrows the Gateway response to a string-keyed record.
+  const record = response as MatrixOwnerActionResponse;
+  if (Object.hasOwn(record, field)) {
+    return record[field];
+  }
+  const message = typeof record.error === "string" ? record.error : "Matrix owner action failed";
+  throw new Error(message);
+}
+
+export async function runMatrixCliOwnerAction<T>(params: {
+  accountId: string;
+  operation: string;
+  actionParams?: Record<string, unknown>;
+  resultField: string;
+  runLocal: () => Promise<T>;
+}): Promise<T> {
+  try {
+    return await params.runLocal();
+  } catch (error) {
+    if (!isMatrixCryptoStoreOwnerActiveError(error)) {
+      throw error;
+    }
+  }
+
+  const response = await callGatewayFromCli(
+    "message.action",
+    {},
+    {
+      channel: "matrix",
+      action: "permissions",
+      accountId: params.accountId,
+      senderIsOwner: true,
+      params: {
+        operation: params.operation,
+        accountId: params.accountId,
+        ...params.actionParams,
+      },
+    },
+    {
+      clientName: "cli",
+      mode: "cli",
+      progress: false,
+      scopes: ["operator.admin", "operator.write", "operator.read"],
+    },
+  );
+  // SAFETY: each caller pairs the operation with its protocol-defined response field and T.
+  return readMatrixOwnerActionField(response, params.resultField) as T;
+}
 
 function scheduleMatrixCliExit(): void {
   if (matrixCliExitScheduled || process.env.VITEST) {

@@ -45,6 +45,7 @@ import {
   listMatrixVerifications,
   mismatchMatrixVerificationSas,
   requestMatrixVerification,
+  resetMatrixRoomKeyBackup,
   restoreMatrixRoomKeyBackup,
   scanMatrixVerificationQr,
   startMatrixVerification,
@@ -473,6 +474,13 @@ export async function handleMatrixAction(
       },
       "verification-backup-status": async () =>
         jsonResult({ ok: true, status: await getMatrixRoomKeyBackupStatus(clientOpts) }),
+      "verification-backup-reset": async () => {
+        const result = await resetMatrixRoomKeyBackup({
+          rotateRecoveryKey: params.rotateRecoveryKey === true,
+          ...clientOpts,
+        });
+        return jsonResult({ ok: result.success, result });
+      },
       "verification-backup-restore": async () => {
         const result = await restoreMatrixRoomKeyBackup({
           recoveryKey: readRecoveryKey(),
