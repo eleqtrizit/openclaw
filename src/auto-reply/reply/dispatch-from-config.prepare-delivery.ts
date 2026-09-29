@@ -146,7 +146,7 @@ export async function prepareDispatchDelivery(state: GatherDispatchRequestReadyS
           : undefined,
       workspaceOnly: currentPermissionMode && currentPermissionMode !== "full" ? true : undefined,
       allowHostWorkspace: currentAuthorityUnavailable ? false : undefined,
-      assertCommitAllowed: sessionStoreEntry.entry
+      assertCommitAllowed: currentEntry
         ? () => {
             const latestEntry = resolveSessionStoreLookup(mediaSessionContext, cfg).entry;
             if (
