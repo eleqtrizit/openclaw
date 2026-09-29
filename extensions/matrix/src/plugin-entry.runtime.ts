@@ -10,6 +10,9 @@ type MatrixVerificationRequest = Pick<GatewayRequestHandlerOptions, "params" | "
 const loadMatrixVerificationRuntime = createLazyRuntimeModule(
   () => import("./matrix/actions/verification.js"),
 );
+const loadMatrixOperatorActionsRuntime = createLazyRuntimeModule(
+  () => import("./matrix/operator-actions.js"),
+);
 
 function sendError(respond: (ok: boolean, payload?: unknown) => void, err: unknown) {
   respond(false, { error: formatErrorMessage(err) });
@@ -75,6 +78,23 @@ export async function handleVerificationStatus({
       cfg: context.getRuntimeConfig(),
     });
     respond(true, status);
+  } catch (err) {
+    sendError(respond, err);
+  }
+}
+
+export async function handleMatrixOperatorAction({
+  params,
+  respond,
+  context,
+}: MatrixVerificationRequest): Promise<void> {
+  try {
+    const { runMatrixOperatorAction } = await loadMatrixOperatorActionsRuntime();
+    const result = await runMatrixOperatorAction({
+      cfg: context.getRuntimeConfig(),
+      input: params ?? {},
+    });
+    respond(true, { ok: true, ...result });
   } catch (err) {
     sendError(respond, err);
   }

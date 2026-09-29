@@ -7,11 +7,24 @@ const gatewayMocks = vi.hoisted(() => ({
 
 vi.mock("openclaw/plugin-sdk/gateway-runtime", () => ({
   callGatewayFromCli: gatewayMocks.callGatewayFromCli,
+  isGatewayClientRequestError: (error: unknown) =>
+    error instanceof Error && error.name === "GatewayClientRequestError",
+  isGatewayTransportError: (error: unknown) =>
+    error instanceof Error && error.name === "GatewayTransportError",
 }));
 
-function ownerActiveError(): Error & { code: string } {
-  return Object.assign(new Error("owner active"), {
-    code: "matrix_crypto_store_owner_active",
+function gatewayTransportError(code?: number): Error {
+  return Object.assign(new Error("gateway transport failed"), {
+    name: "GatewayTransportError",
+    kind: "closed",
+    ...(code === undefined ? {} : { code }),
+  });
+}
+
+function gatewayRequestError(message: string): Error {
+  return Object.assign(new Error(message), {
+    name: "GatewayClientRequestError",
+    gatewayCode: "INVALID_REQUEST",
   });
 }
 
@@ -20,22 +33,9 @@ describe("Matrix CLI owner actions", () => {
     gatewayMocks.callGatewayFromCli.mockReset();
   });
 
-  it("keeps standalone commands local when no other process owns crypto", async () => {
-    const localStatus = { serverDeviceKnown: true };
-
-    await expect(
-      runMatrixCliOwnerAction({
-        accountId: "ops",
-        operation: "verification-status",
-        resultField: "status",
-        runLocal: async () => localStatus,
-      }),
-    ).resolves.toBe(localStatus);
-    expect(gatewayMocks.callGatewayFromCli).not.toHaveBeenCalled();
-  });
-
-  it("routes a contended command through the authenticated Gateway owner", async () => {
+  it("uses the authenticated Gateway owner before opening crypto locally", async () => {
     const ownerStatus = { serverDeviceKnown: true, signedByOwner: true };
+    const runLocal = vi.fn(async () => ({ serverDeviceKnown: false }));
     gatewayMocks.callGatewayFromCli.mockResolvedValue({ ok: true, status: ownerStatus });
 
     await expect(
@@ -44,25 +44,18 @@ describe("Matrix CLI owner actions", () => {
         operation: "verification-status",
         actionParams: { includeRecoveryKey: false },
         resultField: "status",
-        runLocal: async () => {
-          throw ownerActiveError();
-        },
+        runLocal,
       }),
     ).resolves.toBe(ownerStatus);
 
+    expect(runLocal).not.toHaveBeenCalled();
     expect(gatewayMocks.callGatewayFromCli).toHaveBeenCalledWith(
-      "message.action",
+      "matrix.operatorAction",
       {},
       {
-        channel: "matrix",
-        action: "permissions",
+        operation: "verification-status",
         accountId: "ops",
-        senderIsOwner: true,
-        params: {
-          operation: "verification-status",
-          accountId: "ops",
-          includeRecoveryKey: false,
-        },
+        includeRecoveryKey: false,
       },
       {
         clientName: "cli",
@@ -73,19 +66,50 @@ describe("Matrix CLI owner actions", () => {
     );
   });
 
-  it("does not hide unrelated local command failures", async () => {
-    const failure = new Error("homeserver unavailable");
+  it("runs locally only when no Gateway is listening", async () => {
+    const localStatus = { serverDeviceKnown: true };
+    gatewayMocks.callGatewayFromCli.mockRejectedValue(gatewayTransportError());
 
     await expect(
       runMatrixCliOwnerAction({
         accountId: "ops",
-        operation: "verification-backup-status",
+        operation: "verification-status",
         resultField: "status",
-        runLocal: async () => {
-          throw failure;
-        },
+        runLocal: async () => localStatus,
       }),
-    ).rejects.toBe(failure);
-    expect(gatewayMocks.callGatewayFromCli).not.toHaveBeenCalled();
+    ).resolves.toBe(localStatus);
+  });
+
+  it("fails closed when a live older Gateway lacks the operator method", async () => {
+    const runLocal = vi.fn(async () => ({ serverDeviceKnown: true }));
+    gatewayMocks.callGatewayFromCli.mockRejectedValue(
+      gatewayRequestError("unknown method: matrix.operatorAction"),
+    );
+
+    await expect(
+      runMatrixCliOwnerAction({
+        accountId: "ops",
+        operation: "verification-status",
+        resultField: "status",
+        runLocal,
+      }),
+    ).rejects.toThrow("Restart it with the current OpenClaw version");
+    expect(runLocal).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back during a live Gateway restart or authorization failure", async () => {
+    const runLocal = vi.fn(async () => ({ serverDeviceKnown: true }));
+    const error = gatewayTransportError(1006);
+    gatewayMocks.callGatewayFromCli.mockRejectedValue(error);
+
+    await expect(
+      runMatrixCliOwnerAction({
+        accountId: "ops",
+        operation: "verification-status",
+        resultField: "status",
+        runLocal,
+      }),
+    ).rejects.toBe(error);
+    expect(runLocal).not.toHaveBeenCalled();
   });
 });

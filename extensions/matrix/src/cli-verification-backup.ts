@@ -62,7 +62,10 @@ export function registerMatrixVerificationBackupCommands(verify: Command): void 
             return await cli.runMatrixCliOwnerAction({
               accountId,
               operation: "verification-backup-reset",
-              actionParams: { rotateRecoveryKey: options.rotateRecoveryKey === true },
+              actionParams: {
+                confirmBackupReset: true,
+                rotateRecoveryKey: options.rotateRecoveryKey === true,
+              },
               resultField: "result",
               runLocal: async () =>
                 await verification.resetMatrixRoomKeyBackup({

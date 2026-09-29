@@ -1,9 +1,17 @@
 // Matrix tests cover cli plugin behavior.
 import { Command } from "commander";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
-import { formatZonedTimestamp } from "openclaw/plugin-sdk/time-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerMatrixCli } from "./cli.js";
+import {
+  diagnosticMatrixBackup,
+  formatExpectedLocalTimestamp,
+  healthyMatrixBackup,
+  matrixVerificationState,
+  matrixVerificationStatus,
+  mockMatrixVerificationSummary,
+  successfulMatrixBootstrap,
+} from "./cli.test-support.js";
 import type { CoreConfig } from "./types.js";
 
 const bootstrapMatrixVerificationMock = vi.fn();
@@ -37,6 +45,14 @@ const verifyMatrixRecoveryKeyMock = vi.fn();
 const consoleLogMock = vi.fn();
 const consoleErrorMock = vi.fn();
 const stdoutWriteMock = vi.fn();
+const gatewayMocks = vi.hoisted(() => ({ callGatewayFromCli: vi.fn() }));
+
+function unavailableGatewayError(): Error {
+  return Object.assign(new Error("gateway unavailable"), {
+    name: "GatewayTransportError",
+    kind: "closed",
+  });
+}
 
 function mockRecoveryKeyStdin(...values: string[]): void {
   vi.spyOn(process.stdin, Symbol.asyncIterator).mockReturnValue(
@@ -72,6 +88,14 @@ function mockCallArg(mock: ReturnType<typeof vi.fn>, callIndex = 0, argIndex = 0
 function stdoutWriteArg(callIndex = -1) {
   return mockCallArg(stdoutWriteMock, callIndex);
 }
+
+vi.mock("openclaw/plugin-sdk/gateway-runtime", () => ({
+  callGatewayFromCli: gatewayMocks.callGatewayFromCli,
+  isGatewayClientRequestError: (error: unknown) =>
+    error instanceof Error && error.name === "GatewayClientRequestError",
+  isGatewayTransportError: (error: unknown) =>
+    error instanceof Error && error.name === "GatewayTransportError",
+}));
 
 vi.mock("./matrix/actions/verification.js", () => ({
   acceptMatrixVerification: (...args: unknown[]) => acceptMatrixVerificationMock(...args),
@@ -171,65 +195,6 @@ function mockMatrixAccountConfigApply(): void {
   );
 }
 
-function healthyMatrixBackup(overrides: Record<string, unknown> = {}) {
-  return {
-    serverVersion: "1",
-    activeVersion: "1",
-    trusted: true,
-    matchesDecryptionKey: true,
-    decryptionKeyCached: true,
-    ...overrides,
-  };
-}
-
-function diagnosticMatrixBackup(overrides: Record<string, unknown> = {}) {
-  return {
-    ...healthyMatrixBackup(),
-    keyLoadAttempted: false,
-    keyLoadError: null,
-    ...overrides,
-  };
-}
-
-function matrixVerificationState(overrides: Record<string, unknown> = {}) {
-  const { backup: backupOverrides, ...statusOverrides } = overrides;
-  return {
-    encryptionEnabled: true,
-    verified: true,
-    localVerified: true,
-    crossSigningVerified: true,
-    signedByOwner: true,
-    userId: "@bot:example.org",
-    deviceId: "DEVICE123",
-    backupVersion: "1",
-    backup: healthyMatrixBackup(backupOverrides as Record<string, unknown> | undefined),
-    recoveryKeyStored: true,
-    recoveryKeyCreatedAt: null,
-    ...statusOverrides,
-  };
-}
-
-function matrixVerificationStatus(overrides: Record<string, unknown> = {}) {
-  return { ...matrixVerificationState(overrides), pendingVerifications: 0 };
-}
-
-function successfulMatrixBootstrap(
-  recoveryKeyCreatedAt: string | null = null,
-  backupVersion: string | null = null,
-) {
-  return {
-    success: true,
-    verification: { recoveryKeyCreatedAt, backupVersion },
-    crossSigning: {},
-    pendingVerifications: 0,
-    cryptoBootstrap: {},
-  };
-}
-
-function formatExpectedLocalTimestamp(value: string): string {
-  return formatZonedTimestamp(new Date(value), { displaySeconds: true }) ?? value;
-}
-
 function mockMatrixVerificationStatus(params: {
   recoveryKeyCreatedAt: string | null;
   verifiedAt?: string;
@@ -243,32 +208,12 @@ function mockMatrixVerificationStatus(params: {
   );
 }
 
-function mockMatrixVerificationSummary(overrides: Record<string, unknown> = {}) {
-  return {
-    id: "self-1",
-    transactionId: "txn-1",
-    otherUserId: "@bot:example.org",
-    otherDeviceId: "PHONE123",
-    isSelfVerification: true,
-    initiatedByMe: true,
-    phaseName: "started",
-    pending: true,
-    methods: ["m.sas.v1"],
-    chosenMethod: "m.sas.v1",
-    hasSas: true,
-    sas: {
-      decimal: [1234, 5678, 9012],
-    },
-    completed: false,
-    ...overrides,
-  };
-}
-
 describe("matrix CLI verification commands", () => {
   let previousExitCode: typeof process.exitCode;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    gatewayMocks.callGatewayFromCli.mockRejectedValue(unavailableGatewayError());
     previousExitCode = process.exitCode;
     process.exitCode = 0;
     vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => consoleLogMock(...args));

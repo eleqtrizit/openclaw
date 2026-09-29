@@ -14,20 +14,41 @@ const loadMatrixHandlersRuntimeModule = createLazyRuntimeModule(
 
 export function registerMatrixFullRuntime(api: OpenClawPluginApi): void {
   setMatrixRuntimeLifecycle(api.runtime, api.lifecycle);
-  api.registerGatewayMethod("matrix.verify.recoveryKey", async (ctx) => {
-    const { handleVerifyRecoveryKey } = await loadMatrixHandlersRuntimeModule();
-    await handleVerifyRecoveryKey(ctx);
-  });
+  api.registerGatewayMethod(
+    "matrix.verify.recoveryKey",
+    async (ctx) => {
+      const { handleVerifyRecoveryKey } = await loadMatrixHandlersRuntimeModule();
+      await handleVerifyRecoveryKey(ctx);
+    },
+    { scope: "operator.admin" },
+  );
 
-  api.registerGatewayMethod("matrix.verify.bootstrap", async (ctx) => {
-    const { handleVerificationBootstrap } = await loadMatrixHandlersRuntimeModule();
-    await handleVerificationBootstrap(ctx);
-  });
+  api.registerGatewayMethod(
+    "matrix.verify.bootstrap",
+    async (ctx) => {
+      const { handleVerificationBootstrap } = await loadMatrixHandlersRuntimeModule();
+      await handleVerificationBootstrap(ctx);
+    },
+    { scope: "operator.admin" },
+  );
 
-  api.registerGatewayMethod("matrix.verify.status", async (ctx) => {
-    const { handleVerificationStatus } = await loadMatrixHandlersRuntimeModule();
-    await handleVerificationStatus(ctx);
-  });
+  api.registerGatewayMethod(
+    "matrix.verify.status",
+    async (ctx) => {
+      const { handleVerificationStatus } = await loadMatrixHandlersRuntimeModule();
+      await handleVerificationStatus(ctx);
+    },
+    { scope: "operator.admin" },
+  );
+
+  api.registerGatewayMethod(
+    "matrix.operatorAction",
+    async (ctx) => {
+      const { handleMatrixOperatorAction } = await loadMatrixHandlersRuntimeModule();
+      await handleMatrixOperatorAction(ctx);
+    },
+    { scope: "operator.admin" },
+  );
 
   registerMatrixSubagentHooks(api);
 }

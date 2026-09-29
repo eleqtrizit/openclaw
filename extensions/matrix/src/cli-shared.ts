@@ -1,7 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { callGatewayFromCli } from "openclaw/plugin-sdk/gateway-runtime";
+import {
+  callGatewayFromCli,
+  isGatewayClientRequestError,
+  isGatewayTransportError,
+} from "openclaw/plugin-sdk/gateway-runtime";
 import { parseStrictInteger } from "openclaw/plugin-sdk/number-runtime";
 import { readByteStreamWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
 import {
@@ -23,16 +27,18 @@ import type { CoreConfig } from "./types.js";
 
 let matrixCliExitScheduled = false;
 const MATRIX_CLI_RECOVERY_KEY_STDIN_MAX_BYTES = 1024 * 1024;
-const MATRIX_CRYPTO_STORE_OWNER_ACTIVE_ERROR_CODE = "matrix_crypto_store_owner_active";
+const MATRIX_OPERATOR_ACTION_METHOD = "matrix.operatorAction";
 
 type MatrixOwnerActionResponse = Record<string, unknown>;
 
-function isMatrixCryptoStoreOwnerActiveError(error: unknown): boolean {
+function isGatewayUnavailableForMatrixLocalFallback(error: unknown): boolean {
+  return isGatewayTransportError(error) && error.kind === "closed" && error.code === undefined;
+}
+
+function isOlderGatewayWithoutMatrixOperatorAction(error: unknown): boolean {
   return (
-    error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    error.code === MATRIX_CRYPTO_STORE_OWNER_ACTIVE_ERROR_CODE
+    isGatewayClientRequestError(error) &&
+    error.message.includes(`unknown method: ${MATRIX_OPERATOR_ACTION_METHOD}`)
   );
 }
 
@@ -56,35 +62,35 @@ export async function runMatrixCliOwnerAction<T>(params: {
   resultField: string;
   runLocal: () => Promise<T>;
 }): Promise<T> {
+  let response: unknown;
   try {
-    return await params.runLocal();
-  } catch (error) {
-    if (!isMatrixCryptoStoreOwnerActiveError(error)) {
-      throw error;
-    }
-  }
-
-  const response = await callGatewayFromCli(
-    "message.action",
-    {},
-    {
-      channel: "matrix",
-      action: "permissions",
-      accountId: params.accountId,
-      senderIsOwner: true,
-      params: {
+    response = await callGatewayFromCli(
+      MATRIX_OPERATOR_ACTION_METHOD,
+      {},
+      {
         operation: params.operation,
         accountId: params.accountId,
         ...params.actionParams,
       },
-    },
-    {
-      clientName: "cli",
-      mode: "cli",
-      progress: false,
-      scopes: ["operator.admin", "operator.write", "operator.read"],
-    },
-  );
+      {
+        clientName: "cli",
+        mode: "cli",
+        progress: false,
+        scopes: ["operator.admin", "operator.write", "operator.read"],
+      },
+    );
+  } catch (error) {
+    if (isOlderGatewayWithoutMatrixOperatorAction(error)) {
+      throw new Error(
+        "The running Gateway does not support Matrix owner actions. Restart it with the current OpenClaw version before running this command.",
+        { cause: error },
+      );
+    }
+    if (!isGatewayUnavailableForMatrixLocalFallback(error)) {
+      throw error;
+    }
+    return await params.runLocal();
+  }
   // SAFETY: each caller pairs the operation with its protocol-defined response field and T.
   return readMatrixOwnerActionField(response, params.resultField) as T;
 }
