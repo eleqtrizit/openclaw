@@ -7,6 +7,8 @@ import type { AnyAgentTool } from "./common.js";
 import {
   capCronJobToolsAllowOnCreate,
   cronCreateRequiresCreatorAuthority,
+  cronCreateRequiresStreamExecAuthority,
+  cronMutationRequiresStreamExecAuthority,
   planCronJobUpdatePatch,
   replaceWithEffectiveCronCreatorToolAllowlist,
   resolveCronCreatorExecToolTarget,
@@ -44,6 +46,19 @@ function readReadyPatch(plan: CronJobUpdatePatchPlan): Record<string, unknown> {
 }
 
 describe("cron tool creator cap", () => {
+  it("distinguishes explicit stream creates from kindless stream update fields", () => {
+    const malformedCreate = {
+      schedule: { kind: "every", everyMs: 60_000, command: ["node", "events.mjs"] },
+    };
+    expect(cronCreateRequiresStreamExecAuthority(malformedCreate)).toBe(false);
+    expect(cronMutationRequiresStreamExecAuthority(malformedCreate)).toBe(true);
+    expect(
+      cronCreateRequiresStreamExecAuthority({
+        schedule: { kind: "stream", command: ["node", "events.mjs"] },
+      }),
+    ).toBe(true);
+  });
+
   it("caps trigger-script creates without changing transport-only jobs", () => {
     const triggerJob = {
       trigger: { script: "return true" },

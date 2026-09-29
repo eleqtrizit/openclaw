@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "../../utils.js";
 import { readCronScheduledToolProjection } from "../exec-tool-target-pinning.js";
 import { createToolPolicyMatcher } from "../tool-policy-match.js";
@@ -197,6 +198,63 @@ export function resolveCronCreatorExecToolTarget(
   return execEntry?.execTarget ? { ...execEntry.execTarget } : undefined;
 }
 
+export function hasCronCreatorExecTool(
+  entries: readonly CronCreatorToolAllowlistEntry[] | undefined,
+): boolean {
+  return normalizeCronCreatorToolsAllow(entries ?? []).some((tool) => tool.name === "exec");
+}
+
+export function cronCreateRequiresStreamExecAuthority(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const schedule = isRecord(value.schedule) ? value.schedule : undefined;
+  return typeof schedule?.kind === "string" && normalizeToolPolicyName(schedule.kind) === "stream";
+}
+
+export function cronMutationRequiresStreamExecAuthority(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const schedule = isRecord(value.schedule) ? value.schedule : undefined;
+  // command/cwd may arrive without kind on an update and inherit a stored
+  // stream schedule. Treat them as stream-authoring until current state proves
+  // otherwise; create inputs use the kind-specific classifier above.
+  return Boolean(
+    schedule &&
+    (cronCreateRequiresStreamExecAuthority(value) ||
+      Object.hasOwn(schedule, "command") ||
+      Object.hasOwn(schedule, "cwd")),
+  );
+}
+
+function cronUpdateNeedsCurrentJobForStreamAuthority(patch: Record<string, unknown>): boolean {
+  return patch.enabled === true || cronMutationRequiresStreamExecAuthority(patch);
+}
+
+/** Whether this update authors or activates a stream source relative to stored state. */
+export function cronUpdateRequiresStreamExecAuthority(
+  patch: Record<string, unknown>,
+  currentJob: Record<string, unknown>,
+): boolean {
+  const currentSchedule = isRecord(currentJob.schedule) ? currentJob.schedule : undefined;
+  const proposedSchedule = isRecord(patch.schedule) ? patch.schedule : undefined;
+  const currentScheduleKind =
+    typeof currentSchedule?.kind === "string"
+      ? normalizeToolPolicyName(currentSchedule.kind)
+      : undefined;
+  const currentState = isRecord(currentJob.state) ? currentJob.state : undefined;
+  const activatesStoredStream =
+    patch.enabled === true &&
+    currentScheduleKind === "stream" &&
+    (currentJob.enabled === false || currentState?.streamRestartExhausted === true);
+  const authorsStream =
+    proposedSchedule !== undefined &&
+    cronMutationRequiresStreamExecAuthority(patch) &&
+    !isDeepStrictEqual(proposedSchedule, currentSchedule);
+  return activatesStoredStream || authorsStream;
+}
+
 function hasCronTriggerScript(value: unknown): boolean {
   return isRecord(value) && typeof value.script === "string" && value.script.trim().length > 0;
 }
@@ -250,6 +308,9 @@ export function cronCreateRequiresCreatorAuthority(
 ): boolean {
   if (!isRecord(value)) {
     return false;
+  }
+  if (cronCreateRequiresStreamExecAuthority(value)) {
+    return true;
   }
   const payload = isRecord(value.payload) ? value.payload : undefined;
   const explicitToolsAllow = classifyExplicitToolsAllow(payload);
@@ -352,6 +413,16 @@ export function planCronJobUpdatePatch(params: {
 }): CronJobUpdatePatchPlan {
   const patch = structuredClone(params.patch);
   const payload = isRecord(patch.payload) ? patch.payload : undefined;
+  if (cronUpdateNeedsCurrentJobForStreamAuthority(patch) && !params.currentJob) {
+    return { kind: "needs-current-job" };
+  }
+  if (
+    params.creatorAuthorityComplete === false &&
+    params.currentJob &&
+    cronUpdateRequiresStreamExecAuthority(patch, params.currentJob)
+  ) {
+    return { kind: "needs-creator-authority" };
+  }
   const explicitPayloadKind = readCronPayloadKind(payload);
   const explicitToolsAllow = classifyExplicitToolsAllow(payload);
   if (payload === undefined && !Object.hasOwn(patch, "trigger")) {

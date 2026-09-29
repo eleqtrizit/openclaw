@@ -3,6 +3,11 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { CronRuntimeAuthority } from "../../cron/runtime-authority.js";
 import type { CronCreatorAuthorityGrant } from "../../gateway/cron-creator-authority-grant.types.js";
 import type { DeliveryContext } from "../../utils/delivery-context.shared.js";
+import type {
+  ExecPolicyOverrides,
+  ExecSessionDefaults,
+  ResolvedExecDefaults,
+} from "../exec-defaults.js";
 import type { callGatewayTool } from "./gateway.js";
 
 export type CronCreatorToolAllowlistEntry =
@@ -53,6 +58,11 @@ export type CronToolOptions = {
    * config keeps the full surface for config-less callers.
    */
   config?: OpenClawConfig;
+  /** Exact session and run-local exec policy used by this creator turn. */
+  execSession?: ExecSessionDefaults;
+  execOverrides?: ExecPolicyOverrides;
+  /** Whether auto host selection resolves into this turn's sandbox. */
+  sandboxed?: boolean;
   currentDeliveryContext?: DeliveryContext;
   /**
    * Effective tool surface visible to the caller that created or edited a cron job.
@@ -76,6 +86,14 @@ export type GatewayToolCaller = typeof callGatewayTool;
 
 export type CronToolDeps = {
   callGatewayTool?: GatewayToolCaller;
+  resolveExecDefaults?: (params: {
+    cfg?: OpenClawConfig;
+    sessionEntry?: ExecSessionDefaults;
+    execOverrides?: ExecPolicyOverrides;
+    agentId?: string;
+    sessionKey?: string;
+    sandboxAvailable?: boolean;
+  }) => ResolvedExecDefaults;
 };
 
 export type ChatMessage = {
