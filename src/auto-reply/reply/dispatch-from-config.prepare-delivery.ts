@@ -113,24 +113,28 @@ export async function prepareDispatchDelivery(state: GatherDispatchRequestReadyS
     | undefined;
   let replyMediaPermissionMode = sessionStoreEntry.entry?.permissionMode;
   let replyMediaSessionRoot = sessionStoreEntry.entry?.sessionRoot;
+  let replyMediaSessionUpdatedAt = sessionStoreEntry.entry?.updatedAt;
   const getNormalizeReplyMediaPaths = async () => {
-    const currentEntry =
-      resolveSessionStoreLookup(
-        sessionStoreEntry.sessionKey ? { ...ctx, SessionKey: sessionStoreEntry.sessionKey } : ctx,
-        cfg,
-      ).entry ?? sessionStoreEntry.entry;
+    const mediaSessionContext = sessionStoreEntry.sessionKey
+      ? { ...ctx, SessionKey: sessionStoreEntry.sessionKey }
+      : ctx;
+    const currentEntry = resolveSessionStoreLookup(mediaSessionContext, cfg).entry;
+    const currentAuthorityUnavailable = Boolean(sessionStoreEntry.entry && !currentEntry);
     const currentPermissionMode = currentEntry?.permissionMode;
     const currentSessionRoot = currentEntry?.sessionRoot;
+    const currentSessionUpdatedAt = currentEntry?.updatedAt;
     if (
       normalizeReplyMediaPaths &&
       currentPermissionMode === replyMediaPermissionMode &&
-      currentSessionRoot === replyMediaSessionRoot
+      currentSessionRoot === replyMediaSessionRoot &&
+      currentSessionUpdatedAt === replyMediaSessionUpdatedAt
     ) {
       return normalizeReplyMediaPaths;
     }
     const { createReplyMediaPathNormalizer } = await loadReplyMediaPathsRuntime();
     replyMediaPermissionMode = currentPermissionMode;
     replyMediaSessionRoot = currentSessionRoot;
+    replyMediaSessionUpdatedAt = currentSessionUpdatedAt;
     normalizeReplyMediaPaths = createReplyMediaPathNormalizer({
       cfg,
       agentId: state.sessionAgentId,
@@ -141,6 +145,20 @@ export async function prepareDispatchDelivery(state: GatherDispatchRequestReadyS
           ? (currentSessionRoot ?? state.workspaceDir)
           : undefined,
       workspaceOnly: currentPermissionMode && currentPermissionMode !== "full" ? true : undefined,
+      allowHostWorkspace: currentAuthorityUnavailable ? false : undefined,
+      assertCommitAllowed: sessionStoreEntry.entry
+        ? () => {
+            const latestEntry = resolveSessionStoreLookup(mediaSessionContext, cfg).entry;
+            if (
+              !latestEntry ||
+              latestEntry.permissionMode !== currentPermissionMode ||
+              latestEntry.sessionRoot !== currentSessionRoot ||
+              latestEntry.updatedAt !== currentSessionUpdatedAt
+            ) {
+              throw new Error("Session media authority changed during attachment staging.");
+            }
+          }
+        : undefined,
       messageProvider: deliveryChannel,
       accountId: replyContextAccountId,
       groupId,

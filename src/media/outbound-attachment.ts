@@ -11,6 +11,7 @@ export async function resolveOutboundAttachmentFromUrl(
     mediaAccess?: OutboundMediaAccess;
     localRoots?: readonly string[];
     readFile?: (filePath: string) => Promise<Buffer>;
+    assertCommitAllowed?: () => void;
   },
 ): Promise<{ path: string; contentType?: string }> {
   const { loadWebMedia, markTrustedGeneratedHtmlPath } = await import("./web-media.js");
@@ -24,13 +25,23 @@ export async function resolveOutboundAttachmentFromUrl(
     }),
   );
   // Preserve source file names so outbound attachments keep useful names after UUID staging.
-  const saved = await saveMediaBuffer(
-    media.buffer,
-    media.contentType ?? undefined,
-    "outbound",
-    maxBytes,
-    media.fileName,
-  );
+  const saved = options?.assertCommitAllowed
+    ? await saveMediaBuffer(
+        media.buffer,
+        media.contentType ?? undefined,
+        "outbound",
+        maxBytes,
+        media.fileName,
+        undefined,
+        { assertCommitAllowed: options.assertCommitAllowed },
+      )
+    : await saveMediaBuffer(
+        media.buffer,
+        media.contentType ?? undefined,
+        "outbound",
+        maxBytes,
+        media.fileName,
+      );
   if (media.trustedGeneratedHtmlSource) {
     try {
       await markTrustedGeneratedHtmlPath(saved.path, media.buffer);

@@ -108,7 +108,8 @@ describe("runReplyAgent media delivery ownership", () => {
         { layout: "state-only", label: "agent-media-owner" },
         async (state) => {
           try {
-            const selected = state.path("project");
+            const workspaceDir = state.path("project");
+            const selected = path.join(workspaceDir, "sessions", "active");
             await mkdir(selected, { recursive: true });
             const bytes = Buffer.from(
               "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
@@ -116,7 +117,9 @@ describe("runReplyAgent media delivery ownership", () => {
             );
             const sources = [
               path.join(selected, "generated.png"),
-              state.path("outside", "outside.png"),
+              configWorkspaceOnly
+                ? state.path("outside", "outside.png")
+                : path.join(workspaceDir, "outside.png"),
             ];
             for (const file of sources) {
               await mkdir(path.dirname(file), { recursive: true });
@@ -129,7 +132,7 @@ describe("runReplyAgent media delivery ownership", () => {
               },
               agents: {
                 ownership: "explicit",
-                entries: { qa: { workspace: state.workspaceDir }, beta: {} },
+                entries: { qa: { workspace: workspaceDir }, beta: {} },
               },
             };
             setRuntimeConfigSnapshot(config, config);
@@ -163,7 +166,7 @@ describe("runReplyAgent media delivery ownership", () => {
                     agentId: "qa",
                     sessionKey,
                     messageProvider: provider,
-                    workspaceDir: selected,
+                    workspaceDir,
                     permissionMode,
                     sessionRoot: selected,
                     config,

@@ -91,6 +91,47 @@ describe("reply media delivery ownership", () => {
     },
   );
 
+  it("fails closed when the current session authority row disappears", async () => {
+    setNoAbort();
+    installThreadingTestPlugin({ id: "imessage" });
+    const dispatcher = createDispatcher();
+    sessionStoreMocks.currentEntry = {
+      sessionId: "media-policy-missing",
+      updatedAt: 1,
+      permissionMode: "full",
+      sessionRoot: "/workspace/session",
+    };
+    replyMediaPathMocks.createReplyMediaPathNormalizer.mockImplementation((options) => {
+      const mediaOptions = options as { allowHostWorkspace?: boolean };
+      return async (payload: ReplyPayload) =>
+        mediaOptions.allowHostWorkspace === false ? { ...payload, mediaUrls: undefined } : payload;
+    });
+    const ctx = buildTestCtx({
+      SessionKey: "agent:main:media-policy-missing",
+      Provider: "webchat",
+      Surface: "webchat",
+      OriginatingChannel: "imessage",
+      OriginatingTo: "imessage:+15550001111",
+      ExplicitDeliverRoute: true,
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver: async () => {
+        sessionStoreMocks.currentEntry = undefined;
+        return { text: "updated", mediaUrls: ["/workspace/private.pdf"] };
+      },
+      replyOptions: { mediaNormalizationOwner: "gateway" },
+    });
+
+    expect(replyMediaPathMocks.createReplyMediaPathNormalizer).toHaveBeenCalledWith(
+      expect.objectContaining({ allowHostWorkspace: false }),
+    );
+    expect(firstRouteReplyCall()).toMatchObject({ payload: { mediaUrls: undefined } });
+  });
+
   it("uses the current restricted session policy for delivery-stage media", async () => {
     setNoAbort();
     installThreadingTestPlugin({ id: "imessage" });

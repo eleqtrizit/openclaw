@@ -31,7 +31,7 @@ vi.mock("../../media/read-capability.js", () => ({
 }));
 
 import { parseReplyDirectives } from "./reply-directives.js";
-import { createReplyMediaPathNormalizer } from "./reply-media-paths.js";
+import { createReplyMediaContext, createReplyMediaPathNormalizer } from "./reply-media-paths.js";
 
 type NormalizedReply = {
   attachments?: Array<{ name?: string; trustedLocalMedia?: boolean }>;
@@ -117,6 +117,75 @@ describe("createReplyMediaPathNormalizer", () => {
 
   afterEach(() => {
     stateDirEnvSnapshot.restore();
+  });
+
+  it("confines restricted reads to the canonical session root", async () => {
+    const sessionRoot = path.resolve("agent-workspace", "sessions", "active");
+    const outside = path.resolve("agent-workspace", "private.png");
+    const underlyingReadFile = vi.fn(async () => Buffer.from("private"));
+    resolveAgentScopedOutboundMediaAccess.mockReturnValueOnce({
+      workspaceDir: path.resolve("agent-workspace"),
+      localRoots: [path.resolve("agent-workspace")],
+      readFile: underlyingReadFile,
+    });
+    resolveOutboundAttachmentFromUrl.mockImplementationOnce(
+      async (
+        _mediaUrl: string,
+        _maxBytes: number,
+        options: { mediaAccess: { readFile: (filePath: string) => Promise<Buffer> } },
+      ) => {
+        await options.mediaAccess.readFile(outside);
+        return { path: "/tmp/outbound-media/private.png" };
+      },
+    );
+    const normalize = createTestReplyMediaNormalizer({
+      sessionWorkspaceDir: sessionRoot,
+      workspaceOnly: true,
+    });
+
+    const result = await normalize({ mediaUrls: [outside] });
+
+    expectNoMedia(result);
+    expect(result.text).toContain("private.png: Delivery failed.");
+    expect(underlyingReadFile).not.toHaveBeenCalled();
+  });
+
+  it("fences staging already in flight when session permission changes", async () => {
+    let releaseLoad!: () => void;
+    let markLoadStarted!: () => void;
+    const loadStarted = new Promise<void>((resolve) => {
+      markLoadStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseLoad = resolve;
+    });
+    resolveOutboundAttachmentFromUrl.mockImplementationOnce(
+      async (
+        _mediaUrl: string,
+        _maxBytes: number,
+        options: { assertCommitAllowed?: () => void },
+      ) => {
+        markLoadStarted();
+        await release;
+        options.assertCommitAllowed?.();
+        return { path: "/tmp/outbound-media/private.png" };
+      },
+    );
+    const context = createReplyMediaContext({
+      cfg: {},
+      workspaceDir: "/tmp/agent-workspace",
+      permissionMode: "full",
+      sessionRoot: "/tmp/agent-workspace/session",
+    });
+
+    const pending = context.normalizePayload({ mediaUrls: ["/tmp/agent-workspace/private.png"] });
+    await loadStarted;
+    context.updateSessionPermissionMode("workspace");
+    releaseLoad();
+    const result = await pending;
+
+    expectNoMedia(result);
+    expect(result.text).toContain("private.png: Delivery failed.");
   });
 
   it("stages workspace-relative media through shared outbound attachment loading", async () => {

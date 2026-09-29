@@ -47,6 +47,29 @@ describe("resolveOutboundAttachmentFromUrl", () => {
     expect(markTrustedGeneratedHtmlPath).not.toHaveBeenCalled();
   });
 
+  it("revalidates authority after loading and before staging", async () => {
+    const buffer = Buffer.from("private");
+    const assertCommitAllowed = vi.fn(() => {
+      throw new Error("authority revoked");
+    });
+    loadWebMedia.mockResolvedValueOnce({
+      buffer,
+      contentType: "application/octet-stream",
+      fileName: "private.bin",
+    });
+    saveMediaBuffer.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[6] as { assertCommitAllowed?: () => void } | undefined;
+      options?.assertCommitAllowed?.();
+      return { path: "/tmp/media/outbound/private.bin" };
+    });
+
+    await expect(
+      resolveOutboundAttachmentFromUrl("./private.bin", 1024, { assertCommitAllowed }),
+    ).rejects.toThrow("authority revoked");
+
+    expect(assertCommitAllowed).toHaveBeenCalledOnce();
+  });
+
   it("marks staged trusted HTML with its exact bytes", async () => {
     const buffer = Buffer.from("<!doctype html><title>report</title>");
     loadWebMedia.mockResolvedValueOnce({
