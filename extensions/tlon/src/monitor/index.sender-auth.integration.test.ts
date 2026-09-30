@@ -267,7 +267,11 @@ describe("monitorTlonProvider production-path sender authentication", () => {
           }),
         ]),
       );
-      expect(JSON.stringify(channelActions)).toContain("Ask the approved ship to send a fresh DM.");
+      await vi.waitFor(() =>
+        expect(JSON.stringify(channelActions)).toContain(
+          "Ask the approved ship to send a fresh DM.",
+        ),
+      );
 
       emitChat({
         whom: "~nec",
