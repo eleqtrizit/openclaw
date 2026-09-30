@@ -53,6 +53,19 @@ function poisonPath(snapshotPath: string): string {
   return `${snapshotPath}.owner.poisoned`;
 }
 
+/** Doctor-only lock: inspect and recover refusal state without entering crypto. */
+export async function withMatrixCryptoStoreRecoveryLock<T>(
+  snapshotPath: string,
+  inspect: (markerPath: string) => Promise<T>,
+): Promise<T> {
+  const lock = await acquireFileLock(`${snapshotPath}.owner`, LOCK_OPTIONS);
+  try {
+    return await inspect(poisonPath(snapshotPath));
+  } finally {
+    await lock.release();
+  }
+}
+
 async function syncParentDirectory(filePath: string): Promise<void> {
   try {
     await syncDirectory(path.dirname(filePath));
@@ -82,7 +95,7 @@ async function poisonMatrixCryptoStore(snapshotPath: string): Promise<void> {
   await syncParentDirectory(marker);
 }
 
-async function clearMatrixCryptoStoreUnsafeState(snapshotPath: string): Promise<void> {
+export async function clearMatrixCryptoStoreUnsafeState(snapshotPath: string): Promise<void> {
   const marker = poisonPath(snapshotPath);
   await fs.unlink(marker);
   await syncParentDirectory(marker);

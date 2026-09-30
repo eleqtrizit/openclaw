@@ -308,6 +308,7 @@ export const databaseWorkerExtensionTestFiles = [
   "extensions/matrix/src/matrix/monitor/handler.binding-route.test.ts",
   "extensions/matrix/src/matrix/sdk.test.ts",
   "extensions/matrix/src/matrix/monitor/startup-verification.test.ts",
+  "extensions/matrix/src/matrix/crypto-unsafe-state-doctor.test.ts",
   "extensions/matrix/src/matrix/sdk/idb-persistence.test.ts",
   "extensions/matrix/src/matrix/sdk/recovery-key-store.test.ts",
   "extensions/matrix/src/matrix/thread-bindings.test.ts",
