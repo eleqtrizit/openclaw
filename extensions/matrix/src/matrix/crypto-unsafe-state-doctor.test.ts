@@ -54,6 +54,17 @@ describe("Matrix crypto unsafe-state Doctor", () => {
     expect(await listMatrixCryptoUnsafeState(stateDir)).toEqual([storageRootDir]);
   });
 
+  it("does not report an armed marker while its crypto owner is live", async () => {
+    const owner = await acquireMatrixCryptoStoreOwnership(snapshotPath);
+    try {
+      await owner.armUnsafeState();
+      expect(await listMatrixCryptoUnsafeState(stateDir)).toEqual([]);
+    } finally {
+      await owner.release();
+    }
+    expect(await listMatrixCryptoUnsafeState(stateDir)).toEqual([storageRootDir]);
+  });
+
   it("refuses recovery while a live owner holds the crypto store", async () => {
     await fs.writeFile(markerPath, "unsafe\n");
     const owner = await acquireMatrixCryptoStoreOwnership(snapshotPath).catch(() => null);
@@ -69,7 +80,7 @@ describe("Matrix crypto unsafe-state Doctor", () => {
       await expect(
         recoverMatrixCryptoUnsafeState({ storageRootDir, acceptSnapshotRollback: true }),
       ).rejects.toThrow();
-      expect(await listMatrixCryptoUnsafeState(stateDir)).toEqual([storageRootDir]);
+      expect(await listMatrixCryptoUnsafeState(stateDir)).toEqual([]);
     });
   });
 
