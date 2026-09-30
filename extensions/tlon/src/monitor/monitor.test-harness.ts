@@ -15,6 +15,7 @@ const {
   inboundRuntimeMock,
   settingsManagerMock,
   realIngressFixture,
+  realSettingsFixture,
   realUrbitFixture,
 } = vi.hoisted(() => ({
   authenticateMock: vi.fn(),
@@ -63,6 +64,9 @@ const {
   realIngressFixture: {
     enabled: false,
     queue: null as unknown,
+  },
+  realSettingsFixture: {
+    enabled: false,
   },
   realUrbitFixture: {
     config: undefined as OpenClawConfig | undefined,
@@ -156,10 +160,15 @@ vi.mock("../urbit/sse-client.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../settings.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../settings.js")>()),
-  createSettingsManager: vi.fn(() => settingsManagerMock),
-}));
+vi.mock("../settings.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../settings.js")>();
+  return {
+    ...actual,
+    createSettingsManager: vi.fn((...args: Parameters<typeof actual.createSettingsManager>) =>
+      realSettingsFixture.enabled ? actual.createSettingsManager(...args) : settingsManagerMock,
+    ),
+  };
+});
 
 vi.mock("./ingress.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./ingress.js")>();
@@ -211,6 +220,7 @@ export function useTlonMonitorFixture() {
     realUrbitFixture.client = null;
     realIngressFixture.enabled = false;
     realIngressFixture.queue = null;
+    realSettingsFixture.enabled = false;
   });
 
   return {
@@ -226,6 +236,7 @@ export function useTlonMonitorFixture() {
     inboundRuntimeMock,
     settingsManagerMock,
     realIngressFixture,
+    realSettingsFixture,
     realUrbitFixture,
   };
 }

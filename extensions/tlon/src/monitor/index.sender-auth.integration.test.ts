@@ -17,6 +17,7 @@ const {
   buildChannelInboundEnvelopeMock,
   inboundRuntimeMock,
   realIngressFixture,
+  realSettingsFixture,
   realUrbitFixture,
 } = useTlonMonitorFixture();
 
@@ -86,8 +87,31 @@ describe("monitorTlonProvider production-path sender authentication", () => {
       });
       realIngressFixture.enabled = true;
       realIngressFixture.queue = queue;
+      realSettingsFixture.enabled = true;
 
-      const subscriptions: Array<{ id: number; action: string; app?: string; path?: string }> = [];
+      const legacyApproval = {
+        id: "dm-legacy-forged",
+        type: "dm" as const,
+        requestingShip: "~bus",
+        messagePreview: "/whoami",
+        originalMessage: {
+          messageId: "legacy-club-forged-approval",
+          messageText: "/whoami",
+          messageContent: [{ inline: ["/whoami"] }],
+          timestamp: 1,
+        },
+        timestamp: 1,
+      };
+      type ChannelAction = {
+        id: number;
+        action: string;
+        app?: string;
+        path?: string;
+        mark?: string;
+        json?: unknown;
+      };
+      const channelActions: ChannelAction[] = [];
+      const subscriptions: ChannelAction[] = [];
       let stream: ServerResponse | undefined;
       const server = createServer((req, res) => {
         const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
@@ -101,7 +125,17 @@ describe("monitorTlonProvider production-path sender authentication", () => {
         }
         if (req.method === "GET" && pathname.startsWith("/~/scry/")) {
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end("{}");
+          res.end(
+            pathname.endsWith("/settings/all.json")
+              ? JSON.stringify({
+                  all: {
+                    moltbot: {
+                      tlon: { pendingApprovals: JSON.stringify([legacyApproval]) },
+                    },
+                  },
+                })
+              : "{}",
+          );
           return;
         }
         if (req.method === "PUT" && pathname.startsWith("/~/channel/")) {
@@ -111,12 +145,8 @@ describe("monitorTlonProvider production-path sender authentication", () => {
             body += part;
           });
           req.on("end", () => {
-            const actions = JSON.parse(body) as Array<{
-              id: number;
-              action: string;
-              app?: string;
-              path?: string;
-            }>;
+            const actions = JSON.parse(body) as ChannelAction[];
+            channelActions.push(...actions);
             subscriptions.push(...actions.filter((action) => action.action === "subscribe"));
             res.writeHead(204);
             res.end();
@@ -200,18 +230,57 @@ describe("monitorTlonProvider production-path sender authentication", () => {
         );
       };
 
+      expect(runtime.log).toHaveBeenCalledWith("[tlon] Loaded 1 pending approval(s) from settings");
+      emitChat({
+        whom: "~nec",
+        id: "approve-persisted-legacy",
+        response: {
+          add: {
+            essay: {
+              author: "~nec",
+              content: [{ inline: ["approve dm-legacy-forged"] }],
+              sent: 2,
+            },
+          },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(runtime.log).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "Skipping DM replay for ~bus: authenticated sender provenance is unavailable",
+          ),
+        ),
+      );
+      expect(inboundRuntimeMock.dispatch).toHaveBeenCalledOnce();
+      expect(channelActions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            action: "poke",
+            app: "settings",
+            mark: "settings-event",
+            json: expect.objectContaining({
+              "put-entry": expect.objectContaining({
+                "entry-key": "dmAllowlist",
+                value: ["~bus"],
+              }),
+            }),
+          }),
+        ]),
+      );
+      expect(JSON.stringify(channelActions)).toContain("Ask the approved ship to send a fresh DM.");
+
       emitChat({
         whom: "~nec",
         id: "allowed-owner-dm",
         response: {
-          add: { essay: { author: "~nec", content: [{ inline: ["hello"] }], sent: 2 } },
+          add: { essay: { author: "~nec", content: [{ inline: ["hello"] }], sent: 3 } },
         },
       });
       await vi.waitFor(() => expect(inboundRuntimeMock.dispatch).toHaveBeenCalledTimes(2));
       expect(buildChannelInboundEnvelopeMock).toHaveBeenCalledWith({
         channel: "Tlon",
         from: "~nec [owner]",
-        timestamp: 2,
+        timestamp: 3,
         body: "hello",
       });
 
@@ -220,7 +289,7 @@ describe("monitorTlonProvider production-path sender authentication", () => {
         id: "live-club-forged-owner",
         response: {
           add: {
-            essay: { author: "~nec", content: [{ inline: ["/whoami"] }], sent: 3 },
+            essay: { author: "~nec", content: [{ inline: ["/whoami"] }], sent: 4 },
           },
         },
       });
