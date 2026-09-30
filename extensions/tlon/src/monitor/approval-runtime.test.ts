@@ -173,10 +173,16 @@ describe("approved DM replay provenance", () => {
       processApprovedMessage,
       refreshWatchedChannels: vi.fn(async () => 0),
     });
-    return { approvalRuntime, processApprovedMessage, runtime, getDmAllowlist: () => dmAllowlist };
+    return {
+      api,
+      approvalRuntime,
+      processApprovedMessage,
+      runtime,
+      getDmAllowlist: () => dmAllowlist,
+    };
   }
 
-  it("replays the exact pre-upgrade DM content authorized by the owner", async () => {
+  it("does not replay pre-upgrade DM content without authenticated sender provenance", async () => {
     const harness = createApprovalHarness();
 
     await expect(harness.approvalRuntime.handleApprovalResponse("approve dm-legacy")).resolves.toBe(
@@ -184,17 +190,12 @@ describe("approved DM replay provenance", () => {
     );
 
     expect(harness.getDmAllowlist()).toEqual(["~bus"]);
-    expect(harness.processApprovedMessage).toHaveBeenCalledOnce();
-    expect(harness.processApprovedMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requestingShip: "~bus",
-        originalMessage: expect.objectContaining({
-          messageId: "message-1",
-          messageText: "hello",
-          messageContent: [{ inline: ["hello"] }],
-          timestamp: 1,
-        }),
-      }),
+    expect(harness.processApprovedMessage).not.toHaveBeenCalled();
+    expect(harness.runtime.log).toHaveBeenCalledWith(
+      expect.stringContaining("authenticated sender provenance is unavailable"),
+    );
+    expect(JSON.stringify(harness.api.poke.mock.calls)).toContain(
+      "Ask the approved ship to send a fresh DM.",
     );
   });
 

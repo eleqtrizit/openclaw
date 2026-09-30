@@ -26,11 +26,6 @@ function canReplayApprovedMessage(approval: PendingApproval): boolean {
     return true;
   }
   const recordedSender = approval.originalMessage.authenticatedSenderShip;
-  if (recordedSender === undefined) {
-    // Pre-upgrade approvals have no authenticated sender snapshot. The owner's
-    // explicit approval authorizes replay under the stored requesting ship.
-    return true;
-  }
   if (typeof recordedSender !== "string") {
     return false;
   }
@@ -263,6 +258,7 @@ export function createTlonApprovalRuntime(params: {
     }
 
     if (parsed.action === "approve") {
+      let approvalConfirmationSuffix = "";
       switch (approval.type) {
         case "dm":
           await addToDmAllowlist(approval.requestingShip);
@@ -272,9 +268,13 @@ export function createTlonApprovalRuntime(params: {
             );
             await processApprovedMessage(approval);
           } else if (approval.originalMessage) {
+            const hasRecordedSender =
+              typeof approval.originalMessage.authenticatedSenderShip === "string";
             runtime.log?.(
-              `[tlon] Skipping DM replay for ${approval.requestingShip}: authenticated sender provenance does not match the approved ship`,
+              `[tlon] Skipping DM replay for ${approval.requestingShip}: authenticated sender provenance ${hasRecordedSender ? "does not match the approved ship" : "is unavailable"}; a fresh DM is required`,
             );
+            approvalConfirmationSuffix =
+              " Stored message content was not replayed because its sender could not be authenticated. Ask the approved ship to send a fresh DM.";
           }
           break;
         case "channel":
@@ -323,7 +323,9 @@ export function createTlonApprovalRuntime(params: {
           break;
       }
 
-      await sendOwnerNotification(formatApprovalConfirmation(approval, "approve"));
+      await sendOwnerNotification(
+        `${formatApprovalConfirmation(approval, "approve")}${approvalConfirmationSuffix}`,
+      );
     } else if (parsed.action === "block") {
       await blockShip(approval.requestingShip);
       await sendOwnerNotification(formatApprovalConfirmation(approval, "block"));
