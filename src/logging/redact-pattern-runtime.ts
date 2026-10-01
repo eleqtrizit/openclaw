@@ -134,27 +134,9 @@ export function rewriteOpenEndedRepeats(source: string, flags = ""): string {
   while (i < source.length) {
     const char = source[i]!;
     if (char === "\\") {
-      // Legacy numeric escapes (\\1-\\9 backreferences, \\123 octal) parse their atoms from
-      // the capture count, which this rewrite does not model; report the source as unsupported
-      // so the configured expression stays unchanged and keeps its exact language.
-      const next = source[i + 1];
-      if (next !== undefined && next >= "0" && next <= "9") {
-        return source;
-      }
-      if (next === "u") {
-        // Incomplete \u escapes are identity escapes in legacy (non-u) mode, and the
-        // unclosed \u{ form is unmodelable; either way the atom boundary is not what
-        // escapeAtomEnd reports, so leave the source unchanged and keep its language.
-        const braceForm = source[i + 2] === "{";
-        const closedBrace = braceForm && source.indexOf("}", i + 3) !== -1;
-        let hexCount = 0;
-        while (hexCount < 4 && HEX_DIGIT_RE.test(source[i + 2 + hexCount] ?? "")) {
-          hexCount += 1;
-        }
-        if ((!braceForm && hexCount < 4) || (braceForm && !closedBrace)) {
-          return source;
-        }
-      }
+      // Only canonical built-in sources reach this rewriter; operator-configured sources
+      // compile unmodified at the caller, so their legacy escape and class boundaries keep
+      // their exact language. The escape handling below is exact for the built-in sources.
       const end = escapeAtomEnd(source, i);
       if (end < 0) {
         out += char;

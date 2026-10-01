@@ -83,6 +83,12 @@ const builtInResolvedPatterns = new WeakSet<ResolvedRedactPattern>();
 // Patterns whose left-context assertions or complete token can cross a chunk boundary must run
 // against the full string; chunking can invent a `^` boundary or split the secret itself.
 const chunkUnsafePatterns = new WeakSet<ResolvedRedactPattern>();
+// Canonical built-in sources are the only expressions the repeat rewriter optimizes; every
+// operator-configured source compiles unmodified so its exact legacy language is preserved.
+const canonicalBuiltInSources = new Set<string>([
+  ...DEFAULT_REDACT_PATTERNS,
+  ...TOOL_PAYLOAD_REDACT_PATTERNS,
+].filter((entry): entry is string => typeof entry === "string"));
 const formAwareEqualsAssignmentPatterns = new WeakSet<ResolvedRedactPattern>();
 const sourceAssignmentPatterns = new WeakSet<ResolvedRedactPattern>();
 let defaultResolvedPatterns: ResolvedRedactPattern[] | undefined;
@@ -203,10 +209,15 @@ function parsePattern(raw: RedactPattern): ResolvedRedactPattern | null {
     }
   } else if (raw.trim()) {
     const [source, flags] = parseRedactPatternSource(raw);
-    // Open-ended repeats on flat single-character atoms compile without one backtrack stack
-    // entry per repetition, so multi-megabyte values no longer overflow the regex stack.
-    // Flags decide astral-character atom boundaries; unsupported atom shapes stay unchanged.
-    pattern = compileConfigRegex(rewriteOpenEndedRepeats(source, flags), flags)?.regex ?? null;
+    // Open-ended repeats on canonical built-in flat single-character atoms compile without
+    // one backtrack stack entry per repetition, so multi-megabyte values no longer overflow
+    // the regex stack. Operator-configured sources compile unmodified: legacy escape and
+    // class boundaries parse their atoms in ways the rewriter does not model, so rewriting
+    // them could silently change the configured pattern's language.
+    const optimized = canonicalBuiltInSources.has(raw)
+      ? rewriteOpenEndedRepeats(source, flags)
+      : source;
+    pattern = compileConfigRegex(optimized, flags)?.regex ?? null;
   }
   if (pattern && typeof raw === "string" && SHELL_REFERENCE_PRESERVING_PATTERN_SOURCES.has(raw)) {
     shellReferencePreservingPatterns.add(pattern);
