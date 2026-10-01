@@ -93,7 +93,10 @@ function classAtomEnd(source: string, i: number): number {
     cursor += 1;
   }
   if (source[cursor] === "]") {
-    cursor += 1;
+    // `[]` and `[^]` are valid JavaScript classes this atom parser does not model; report
+    // the source as unsupported so the rewrite leaves it unchanged and the configured
+    // pattern keeps its exact language.
+    return -1;
   }
   while (cursor < source.length) {
     const char = source[cursor];
@@ -131,6 +134,13 @@ export function rewriteOpenEndedRepeats(source: string, flags = ""): string {
   while (i < source.length) {
     const char = source[i]!;
     if (char === "\\") {
+      // Legacy numeric escapes (\\1-\\9 backreferences, \\123 octal) parse their atoms from
+      // the capture count, which this rewrite does not model; report the source as unsupported
+      // so the configured expression stays unchanged and keeps its exact language.
+      const next = source[i + 1];
+      if (next !== undefined && next >= "0" && next <= "9") {
+        return source;
+      }
       const end = escapeAtomEnd(source, i);
       if (end < 0) {
         out += char;
@@ -166,6 +176,11 @@ export function rewriteOpenEndedRepeats(source: string, flags = ""): string {
     }
     if (char === "[") {
       const end = classAtomEnd(source, i);
+      if (end < 0) {
+        // Unsupported class shape: report the source as unsupported so the rewrite leaves
+        // the configured expression unchanged and the pattern keeps its exact language.
+        return source;
+      }
       out += source.slice(i, end);
       atomStart = i;
       atomEnd = end;

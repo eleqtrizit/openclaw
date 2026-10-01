@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { withEnv } from "../test-utils/env.js";
 import { TOOL_PAYLOAD_AMBIGUOUS_ASSIGNMENT_PATTERNS } from "./redact-patterns.js";
 import { replacePatternBounded } from "./redact-bounded.js";
+import { replaceRedactPattern } from "./redact-pattern-runtime.js";
 import { redactSourceInputTextWithConfig } from "./redact-source.js";
 import {
   captureSensitiveTextRedactionSnapshot,
@@ -79,12 +80,11 @@ describe("bounded replacement output", () => {
 });
 
 describe("whole-text rule replacement", () => {
-  it("applies replacements across the full text without slicing", () => {
-    const pattern = /red/g;
+  it("applies replacements across the full text through the production owner", () => {
     const calls: Array<{ match: string; offset: number; input: string }> = [];
-    const output = "red red red".replace(pattern, (match, offset, input) => {
-      calls.push({ match, offset, input });
-      return calls.length === 3 ? "blue" : match;
+    const output = replaceRedactPattern("red red red", /red/g, (match) => {
+      calls.push({ match: match.match, offset: match.offset, input: match.input });
+      return calls.length === 3 ? "blue" : match.match;
     });
     expect(output).toBe("red red blue");
     expect(calls).toEqual([
