@@ -263,3 +263,23 @@ describe("repeat rewrite atom boundaries", () => {
     expect((resolved as RegExp).test("😀")).toBe(true);
   });
 });
+
+describe("configured source language preservation", () => {
+  it.each([
+    ["property identity escape", "^\\p{L}{1,}$", "p{L}}"],
+    ["named backreference without captures", "^\\k<word>{1,}$", "k<word>"],
+    ["control escape", "^\\c1{1,}$", null],
+    ["octal numeric escape", "^\\1234{1,}$", "S44"],
+    ["incomplete unicode escape", "^\\u12{1,}$", "u122"],
+  ])("preserves the legacy language of %s", (_name, configured, matching) => {
+    // Operator-configured sources compile unmodified: the rewriter optimizes only canonical
+    // built-in sources, so the resolved pattern keeps the exact configured source string.
+    const resolved = resolveRedactOptions({ mode: "tools", patterns: [configured] });
+    const pattern = resolved.patterns[0];
+    expect(pattern instanceof RegExp).toBe(true);
+    expect((pattern as RegExp).source).toBe(configured);
+    if (matching !== null) {
+      expect((pattern as RegExp).test(matching)).toBe(true);
+    }
+  });
+});
