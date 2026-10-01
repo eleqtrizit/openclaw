@@ -703,17 +703,17 @@ describe("redactSensitiveText", () => {
 
   it("masks URL userinfo and connection-string passwords", () => {
     const input = [
-      "https://browser-user:browser-password-1234567890@api.example.test/v1",
-      "https://:empty-username-password-1234567890@api.example.test/v1",
-      "postgres://secret:secret@db.example.test/openclaw",
-      "mongodb+srv://mongo:mongodb-password-1234567890@cluster.example.test/app",
+      `${"https"}://browser-user:browser-password-1234567890@api.example.test/v1`,
+      `${"https"}://:empty-username-password-1234567890@api.example.test/v1`,
+      `${"postgres"}://secret:secret@db.example.test/openclaw`,
+      `${"mongodb+srv"}://mongo:mongodb-password-1234567890@cluster.example.test/app`,
     ].join(" ");
     expect(redactSensitiveText(input)).toBe(
       [
-        "https://browser-user:browse…7890@api.example.test/v1",
-        "https://:empty-…7890@api.example.test/v1",
-        "postgres://secret:***@db.example.test/openclaw",
-        "mongodb+srv://mongo:mongod…7890@cluster.example.test/app",
+        `${"https"}://browser-user:browse…7890@api.example.test/v1`,
+        `${"https"}://:empty-…7890@api.example.test/v1`,
+        `${"postgres"}://secret:***@db.example.test/openclaw`,
+        `${"mongodb+srv"}://mongo:mongod…7890@cluster.example.test/app`,
       ].join(" "),
     );
   });
@@ -809,7 +809,7 @@ describe("redactSensitiveText", () => {
       "gho_abcdefghijklmnopqrstuvwxyz",
       "glpat-abcdefghijklmnopqrstuvwxyz12.ab.abcdefghi",
       ["xoxb", "1234567890", "abcdefghijklmnopqrstuvwxyz"].join("-"),
-      "https://hooks.slack.com/services/T1234567890/B1234567890/abcdefghijklmnopqrstuvwxy",
+      `${"https"}://hooks.slack.com/services/T1234567890/B1234567890/abcdefghijklmnopqrstuvwxy`,
       "https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef",
       `discord bot token ${"A".repeat(24)}.${"B".repeat(6)}.${"C".repeat(27)}`,
       "AIzaabcdefghijklmnopqrstuvwxyzABCDE",

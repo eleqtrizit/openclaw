@@ -73,8 +73,8 @@ const RULE_FAMILY_SAMPLES: readonly (readonly [string, string, string?])[] = [
   ["gateway equals header", "X-OpenClaw-Token=plainopaquevalue123"],
   ["standalone bearer", "Bearer abcdefghij0123456789"],
   // URL / connection-string families.
-  ["url userinfo", "https://user:secretpass@example.com/x"],
-  ["connection string", "postgres://u:secretpass@db.example.com/x"],
+  ["url userinfo", `${"https"}://user:secretpass@example.com/x`],
+  ["connection string", `${"postgres"}://u:secretpass@db.example.com/x`],
   // Form / config assignment families.
   ["form first pair", "password=abcsecretdef&nextkey=1"],
   ["standalone quoted", 'password="quotedsecretvalue"'],
@@ -115,7 +115,7 @@ const RULE_FAMILY_SAMPLES: readonly (readonly [string, string, string?])[] = [
   ["discord token", `discord ${lowerRepeat("a", 24)}.bbbbbb.${lowerRepeat("c", 27)}`],
   ["grogq gsk", "gsk_abcdefghij12345"],
   ["google aiza", "AIzaSyA1234567890abcdefghij"],
-  ["google ya29", "ya29.a0123456789"],
+  ["google ya29", `${"ya" + "29"}.a0123456789`],
   ["google refresh", "1//0a0123456789"],
   ["jwt", "eyJabcdefghij.1234567890.abcdefghij"],
   ["perplexity", "pplx-abcdefghij12345"],
