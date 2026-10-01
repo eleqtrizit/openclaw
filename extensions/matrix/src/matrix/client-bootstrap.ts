@@ -84,7 +84,9 @@ export async function resolveRuntimeMatrixClientWithReadiness(
     });
     assertCurrent?.();
   } catch (err) {
-    await lease.release({ mode: "discard" });
+    // Readiness may have initialized Rust crypto before failing. Publish its final
+    // state before relinquishing custody so a normal retry can acquire the store.
+    await lease.release({ mode: "persist" });
     throw err;
   }
   return {

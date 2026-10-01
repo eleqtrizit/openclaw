@@ -125,6 +125,33 @@ describe("Matrix encrypted startup ownership", () => {
     },
   );
 
+  it("allows a successor after post-initialization readiness failure is published", async () => {
+    const tempDir = tempDirs.make("matrix-readiness-retry-");
+    const snapshotPath = path.join(tempDir, "snapshot.json");
+    const options = {
+      userId: "@bot:example.org",
+      deviceId: "BOT",
+      encryption: true,
+      autoBootstrapCrypto: false,
+      cryptoDatabasePrefix: "openclaw-matrix-readiness-test",
+      idbSnapshotPath: snapshotPath,
+    };
+    const failed = new MatrixClient("https://matrix.example.org", "test-token", options);
+    const successor = new MatrixClient("https://matrix.example.org", "test-token", options);
+    fixture.reconcile.mockRejectedValueOnce(new Error("room reconciliation failed"));
+    try {
+      await expect(failed.start()).rejects.toThrow("room reconciliation failed");
+      expect(fixture.init).toHaveBeenCalledTimes(1);
+      expect(await fs.stat(`${snapshotPath}.owner.poisoned`)).toBeDefined();
+      await failed.stopAndPersist();
+      expect(await fs.stat(`${snapshotPath}.owner.poisoned`).catch(() => null)).toBeNull();
+      await successor.prepareForOneOff();
+      expect(fixture.init).toHaveBeenCalledTimes(2);
+    } finally {
+      await Promise.allSettled([failed.stopWithoutPersist(), successor.stopAndPersist()]);
+    }
+  });
+
   it("retains crypto-store ownership after a post-initialization abort", async () => {
     const tempDir = tempDirs.make("matrix-crypto-owner-");
     const snapshotPath = path.join(tempDir, "crypto-idb-snapshot.json");
