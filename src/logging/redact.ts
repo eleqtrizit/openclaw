@@ -23,6 +23,7 @@ import {
   type RedactionField,
   type RedactionOrigins,
 } from "./redact-json.js";
+import { LINEAR_MATCHER_SOURCES } from "./redact-linear-matchers.js";
 import {
   getSecretCaptureStart,
   selectSecretCapture,
@@ -54,7 +55,6 @@ import {
   TOOL_PAYLOAD_AMBIGUOUS_ASSIGNMENT_PATTERNS,
   TOOL_PAYLOAD_REDACT_PATTERNS,
 } from "./redact-patterns.js";
-import { LINEAR_MATCHER_SOURCES } from "./redact-linear-matchers.js";
 import { PEM_REDACT_MATCHER, PEM_REDACT_PATTERN_SOURCE } from "./redact-pem.js";
 import { startRedactionMeasurement } from "./redact-performance.js";
 import {
@@ -85,10 +85,11 @@ const builtInResolvedPatterns = new WeakSet<ResolvedRedactPattern>();
 const chunkUnsafePatterns = new WeakSet<ResolvedRedactPattern>();
 // Canonical built-in sources are the only expressions the repeat rewriter optimizes; every
 // operator-configured source compiles unmodified so its exact legacy language is preserved.
-const canonicalBuiltInSources = new Set<string>([
-  ...DEFAULT_REDACT_PATTERNS,
-  ...TOOL_PAYLOAD_REDACT_PATTERNS,
-].filter((entry): entry is string => typeof entry === "string"));
+const canonicalBuiltInSources = new Set<string>(
+  [...DEFAULT_REDACT_PATTERNS, ...TOOL_PAYLOAD_REDACT_PATTERNS].filter(
+    (entry): entry is string => typeof entry === "string",
+  ),
+);
 const formAwareEqualsAssignmentPatterns = new WeakSet<ResolvedRedactPattern>();
 const sourceAssignmentPatterns = new WeakSet<ResolvedRedactPattern>();
 let defaultResolvedPatterns: ResolvedRedactPattern[] | undefined;
@@ -150,7 +151,6 @@ const STRUCTURED_SECRET_ENV_FIELD_RE = new RegExp(
   String.raw`^(?:(?:[A-Z0-9]+[_-])+(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)|API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|${PAYMENT_CREDENTIAL_ENV_KEYS})$`,
   "i",
 );
-
 
 type RedactOptions = {
   mode?: RedactSensitiveMode;

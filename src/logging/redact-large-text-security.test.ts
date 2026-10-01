@@ -57,7 +57,11 @@ const RULE_FAMILY_SAMPLES: readonly (readonly [string, string, string?])[] = [
   ["cli flag space", "--token opaquevalue12345678"],
   // The AWS sample is split at source level so secret-scanning push protection does not
   // mistake the synthetic fixture value for a real credential; the runtime value is unchanged.
-  ["aws secret field",["aws_secret_access_key = \"","wJalrXUtnFEMIK7MDENGb"].join("")+["PxRfiCYEXAMPLEKEY0a","\""].join("")],
+  [
+    "aws secret field",
+    ['aws_secret_access_key = "', "wJalrXUtnFEMIK7MDENGb"].join("") +
+      ["PxRfiCYEXAMPLEKEY0a", '"'].join(""),
+  ],
   ["pem block", "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----"],
   // Authorization / header families.
   ["authorization bearer", "Authorization: Bearer abcdefghij0123456789"],
@@ -73,8 +77,8 @@ const RULE_FAMILY_SAMPLES: readonly (readonly [string, string, string?])[] = [
   ["gateway equals header", "X-OpenClaw-Token=plainopaquevalue123"],
   ["standalone bearer", "Bearer abcdefghij0123456789"],
   // URL / connection-string families.
-  ["url userinfo",["https","://user:secretpass@example.com/x"].join("")],
-  ["connection string",["postgres","://u:secretpass@db.example.com/x"].join("")],
+  ["url userinfo", ["https", "://user:secretpass@example.com/x"].join("")],
+  ["connection string", ["postgres", "://u:secretpass@db.example.com/x"].join("")],
   // Form / config assignment families.
   ["form first pair", "password=abcsecretdef&nextkey=1"],
   ["standalone quoted", 'password="quotedsecretvalue"'],
@@ -107,15 +111,21 @@ const RULE_FAMILY_SAMPLES: readonly (readonly [string, string, string?])[] = [
   ["gitlab session", "_gitlab_session=abcdefghijklmnopqrst"],
   ["slack xoxb", "xoxb-123456789012-abcdefghij"],
   ["slack xapp", "xapp-123456789012-abcdefghij"],
-  ["slack webhook",["https","://hooks.slack.com/services/"].join("")+ ["T","01234567"].join("") +["/B","01234567"].join("")+["/","abcdefghijklmnopqrst"].join("")],
+  [
+    "slack webhook",
+    ["https", "://hooks.slack.com/services/"].join("") +
+      ["T", "01234567"].join("") +
+      ["/B", "01234567"].join("") +
+      ["/", "abcdefghijklmnopqrst"].join(""),
+  ],
   [
     "discord webhook",
     `https://discord.com/api/webhooks/123456789012345678/${lowerRepeat("a", 60)}`,
   ],
   ["discord token", `discord ${lowerRepeat("a", 24)}.bbbbbb.${lowerRepeat("c", 27)}`],
   ["grogq gsk", "gsk_abcdefghij12345"],
-  ["google aiza",["AIzaSyA123456","7890abcdefghij"].join("")],
-  ["google ya29", ["ya","29"].join("") + ".a0123456789"],
+  ["google aiza", ["AIzaSyA123456", "7890abcdefghij"].join("")],
+  ["google ya29", ["ya", "29"].join("") + ".a0123456789"],
   ["google refresh", "1//0a0123456789"],
   ["jwt", "eyJabcdefghij.1234567890.abcdefghij"],
   ["perplexity", "pplx-abcdefghij12345"],

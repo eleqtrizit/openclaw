@@ -7,10 +7,7 @@ import {
   HTTP_AUTH_SCHEME_PATTERN,
   HTTP_AUTH_SERIALIZED_QUOTE_PATTERN,
 } from "../../packages/acp-core/src/structured-auth-redaction.js";
-import type {
-  RedactMatch,
-  RedactPattern,
-} from "./redact-pattern-runtime.js";
+import type { RedactMatch, RedactPattern } from "./redact-pattern-runtime.js";
 import { PEM_REDACT_PATTERN_SOURCE } from "./redact-pem.js";
 
 export const PAYMENT_CREDENTIAL_ENV_KEYS = String.raw`CARD[_-]?NUMBER|CARD[_-]?CVC|CARD[_-]?CVV|CVC|CVV|SECURITY[_-]?CODE|PAYMENT[_-]?CREDENTIAL|SHARED[_-]?PAYMENT[_-]?TOKEN`;

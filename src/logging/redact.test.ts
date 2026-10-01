@@ -3,9 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withEnv } from "../test-utils/env.js";
-import { TOOL_PAYLOAD_AMBIGUOUS_ASSIGNMENT_PATTERNS } from "./redact-patterns.js";
 import { replacePatternBounded } from "./redact-bounded.js";
 import { replaceRedactPattern } from "./redact-pattern-runtime.js";
+import { TOOL_PAYLOAD_AMBIGUOUS_ASSIGNMENT_PATTERNS } from "./redact-patterns.js";
 import { redactSourceInputTextWithConfig } from "./redact-source.js";
 import {
   captureSensitiveTextRedactionSnapshot,
@@ -953,7 +953,7 @@ describe("redactSensitiveText", () => {
         mode: "tools",
       }),
     ).toBe("GET https://example.test/cb?client_se+cret=***&safe=1");
-        expect(
+    expect(
       redactSensitiveText("body: client_secre%74=opaque-value-123&safe=1", { mode: "tools" }),
     ).toBe("body: client_secre%74=***&safe=1");
     expect(

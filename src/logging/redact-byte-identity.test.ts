@@ -36,9 +36,8 @@ it("fixture is present and bounded by the old slicing threshold", () => {
 it("redacts short texts byte-identically to the pre-fix implementation", () => {
   for (let index = 0; index < fixture.samples.length; index++) {
     const sample = restoreSchemes(fixture.samples[index]!);
-    const [sensitive, toolPayload, modelVisible, logRecord] = fixture.outputs[index]!.map(
-      restoreSchemes,
-    );
+    const [sensitive, toolPayload, modelVisible, logRecord] =
+      fixture.outputs[index]!.map(restoreSchemes);
     expect(redactSensitiveText(sample, { mode: "tools" })).toBe(sensitive);
     expect(redactToolPayloadText(sample)).toBe(toolPayload);
     expect(redactModelVisibleToolPayloadText(sample)).toBe(modelVisible);
