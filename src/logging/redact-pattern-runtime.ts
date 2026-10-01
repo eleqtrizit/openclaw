@@ -42,6 +42,12 @@ function escapeAtomEnd(source: string, i: number): number {
   if (kind === "c") {
     return i + 3;
   }
+  if (kind === "k" && source[i + 2] === "<") {
+    // A named backreference `\k<name>` is one complete atom; a following quantifier must
+    // treat the whole reference (not just `\k`) as the repeated atom.
+    const close = source.indexOf(">", i + 3);
+    return close === -1 ? i + 2 : close + 1;
+  }
   if (kind >= "0" && kind <= "9") {
     let end = i + 2;
     for (let cursor = end; cursor < source.length; cursor += 1) {
@@ -155,6 +161,21 @@ export function rewriteOpenEndedRepeats(source: string): string {
       continue;
     }
     out += char;
+    // A literal astral character is one atom: splitting a surrogate pair between a quantifier
+    // and its atom changes the pattern's language, so advance through the full code point.
+    if (
+      char >= "\uD800" &&
+      char <= "\uDBFF" &&
+      i + 1 < source.length &&
+      source[i + 1]! >= "\uDC00" &&
+      source[i + 1]! <= "\uDFFF"
+    ) {
+      out += source[i + 1]!;
+      atomStart = i;
+      atomEnd = i + 2;
+      i += 2;
+      continue;
+    }
     if (
       char === "*" ||
       char === "+" ||

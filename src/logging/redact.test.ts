@@ -919,6 +919,7 @@ describe("redactSensitiveText", () => {
         mode: "tools",
       }),
     ).toBe("GET https://example.test/cb?client_se+cret=***&safe=1");
+    const __d3 = redactSensitiveText("body: client_secre%74=***&safe=1", { mode: "tools" }); const __expected = "body: client_secre%74=***&safe=1"; console.log("DIAGCP actual:", [...__d3].map((c) => c.codePointAt(0).toString(16)).join(",")); console.log("DIAGCP expected:", [...__expected].map((c) => c.codePointAt(0).toString(16)).join(","));
     expect(
       redactSensitiveText("body: client_secre%74=opaque-value-123&safe=1", { mode: "tools" }),
     ).toBe("body: client_secre%74=***&safe=1");
