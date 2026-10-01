@@ -47,7 +47,6 @@ import {
   FORM_AWARE_EQUALS_ASSIGNMENT_PATTERN_SOURCES,
   FORM_BODY_KEY_INVISIBLE_CHARS,
   IDENTIFIER_SAFE_TOKEN_BOUNDARY,
-  LINEAR_MATCHER_SOURCES,
   PAYMENT_CREDENTIAL_ENV_KEYS,
   PAYMENT_CREDENTIAL_JSON_KEYS,
   PAYMENT_CREDENTIAL_QUERY_KEYS,
@@ -55,6 +54,7 @@ import {
   TOOL_PAYLOAD_AMBIGUOUS_ASSIGNMENT_PATTERNS,
   TOOL_PAYLOAD_REDACT_PATTERNS,
 } from "./redact-patterns.js";
+import { LINEAR_MATCHER_SOURCES } from "./redact-linear-matchers.js";
 import { PEM_REDACT_MATCHER, PEM_REDACT_PATTERN_SOURCE } from "./redact-pem.js";
 import { startRedactionMeasurement } from "./redact-performance.js";
 import {
@@ -270,7 +270,7 @@ function resolvePatterns(value?: readonly RedactPattern[]): ResolvedRedactPatter
   const combined: ResolvedRedactPattern[] = [];
   for (const raw of value) {
     const resolved = parsePattern(raw);
-    if (!resolved || resolved instanceof Array) {
+    if (resolved === null) {
       continue;
     }
     if (builtInRawSet.has(raw)) {
