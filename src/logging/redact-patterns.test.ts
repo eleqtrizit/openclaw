@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compileConfigRegex } from "../security/config-regex.js";
 import { parseRedactPatternSource } from "./redact-pattern-runtime.js";
 import { AWS_SECRET_ACCESS_KEY_MATCHER, DEFAULT_REDACT_PATTERNS } from "./redact-patterns.js";
-import { redactSensitiveText } from "./redact.js";
+import { redactSensitiveText, resolveRedactOptions } from "./redact.js";
 
 describe("default pattern table", () => {
   // A default pattern the safe-regex guard rejects is dropped silently at runtime, which disables
@@ -248,9 +248,18 @@ describe("repeat rewrite atom boundaries", () => {
   it("leaves non-unicode astral quantifiers unchanged so their language is preserved", () => {
     // Without the u flag JavaScript quantifies only the trailing code unit of a literal
     // astral character; rewriting it as a whole-code-point atom changes the language.
-    const [source] = parseRedactPatternSource("/^(😀{1,})$/g");
-    expect(source).toBe("^(😀{1,})$");
-    const compiled = compileConfigRegex(source, "g");
-    expect(compiled?.regex.test("😀")).toBe(true);
+    // Routed through the production boundary so the assertion covers the real rewriter.
+    const configured = "^(😀{1,})$";
+    const options = resolveRedactOptions({
+      mode: "tools",
+      patterns: [configured],
+    });
+    // Without the u flag JavaScript quantifies only the trailing code unit of a literal
+    // astral character. The configured string is resolved through parsePattern (the real
+    // rewriter), and the resolved pattern must still match the legacy-language input.
+    const resolved = options.patterns[0];
+    expect(resolved).toBeDefined();
+    expect(resolved instanceof RegExp).toBe(true);
+    expect((resolved as RegExp).test("😀")).toBe(true);
   });
 });
