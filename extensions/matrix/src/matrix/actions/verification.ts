@@ -490,7 +490,7 @@ export async function getMatrixVerificationStatus(
     },
     // Even a diagnostic read may initialize Rust crypto and mutate its store.
     // A normal close must publish that state and clear durable refusal.
-    "stop",
+    "persist",
   );
 }
 

@@ -101,6 +101,20 @@ describe("client bootstrap", () => {
     expect(sharedLeaseReleaseMock).toHaveBeenCalledWith({ mode: "persist" });
   });
 
+  it("rejects a completed action when final crypto persistence fails", async () => {
+    setAcquiredMatrixClient(createMockMatrixClient());
+    const failure = new Error("final snapshot failed");
+    sharedLeaseReleaseMock.mockRejectedValueOnce(failure);
+
+    await expect(
+      withResolvedRuntimeMatrixClient(
+        { cfg: TEST_CFG, accountId: "default", readiness: "prepared" },
+        async () => "action completed",
+      ),
+    ).rejects.toBe(failure);
+    expect(sharedLeaseReleaseMock).toHaveBeenCalledWith({ mode: "persist" });
+  });
+
   it("passes the transient retirement signal to admitted work", async () => {
     const sharedClient = createMockMatrixClient();
     const lease = setAcquiredMatrixClient(sharedClient);

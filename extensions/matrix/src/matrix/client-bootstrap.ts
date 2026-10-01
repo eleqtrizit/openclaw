@@ -96,7 +96,7 @@ export async function resolveRuntimeMatrixClientWithReadiness(
 export async function withResolvedRuntimeMatrixClient<T>(
   opts: MatrixRuntimeClientOptions,
   run: (client: MatrixClient, abortSignal?: AbortSignal) => Promise<T>,
-  stopMode: MatrixClientReleaseMode = "stop",
+  stopMode: MatrixClientReleaseMode = "persist",
 ): Promise<T> {
   const assertCurrent = captureChannelReadAuthority();
   assertCurrent?.();
