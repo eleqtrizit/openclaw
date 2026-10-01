@@ -12,7 +12,7 @@ import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeNullableString as nonEmptyString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { getTlonRuntime } from "../runtime.js";
 import { UrbitAuthError, UrbitHttpError } from "../urbit/errors.js";
-import { extractAuthenticatedDmPartnerShip } from "./identity.js";
+import { extractAuthenticatedDmPartnerShip, extractClubId } from "./identity.js";
 
 const TLON_INGRESS_PAYLOAD_VERSION = 1;
 const TLON_INGRESS_POLL_INTERVAL_MS = 1_000;
@@ -82,14 +82,15 @@ function inspectChatEvent(
     ? nonEmptyString(envelope.whom.ship)
     : nonEmptyString(envelope?.whom);
   const peer = extractAuthenticatedDmPartnerShip(envelope?.whom);
-  if (!peer) {
-    return null;
+  if (peer) {
+    const legacyLaneKey = rawWhom ? `direct:${rawWhom}` : null;
+    // Keep validated peers on their raw whom lane. Older releases persisted that
+    // form, so normalizing only new admissions could split one conversation
+    // across two concurrent drains during an upgrade.
+    return { eventId, laneKey: legacyLaneKey ?? `direct:${peer}` };
   }
-  const legacyLaneKey = rawWhom ? `direct:${rawWhom}` : null;
-  // Keep validated peers on their raw whom lane. Older releases persisted that
-  // form, so normalizing only new admissions could split one conversation
-  // across two concurrent drains during an upgrade.
-  return { eventId, laneKey: legacyLaneKey ?? `direct:${peer}` };
+  const clubId = extractClubId(envelope?.whom);
+  return clubId ? { eventId, laneKey: `club:${clubId}` } : null;
 }
 
 function inspectTlonIngressEvent(
@@ -211,6 +212,25 @@ export function createTlonIngressMonitor(options: {
     // The Tlon firehose has always surfaced a failed append to its awaited callback.
     appendRetryDelaysMs: [0],
     drain: {
+      deriveLaneKey: (record) => {
+        const payload = record.payload;
+        if (
+          payload.version !== TLON_INGRESS_PAYLOAD_VERSION ||
+          (payload.source !== "channels" && payload.source !== "chat") ||
+          typeof payload.rawEvent !== "string"
+        ) {
+          return undefined;
+        }
+        try {
+          return inspectTlonIngressEvent(payload.source, JSON.parse(payload.rawEvent), {
+            phase: "admission",
+          })?.laneKey;
+        } catch {
+          return undefined;
+        }
+      },
+      reconcileStoredLaneKey: (_record, storedLaneKey, derivedLaneKey) =>
+        storedLaneKey.startsWith("direct:") && derivedLaneKey.startsWith("club:"),
       resolveNonRetryableFailure: resolveTlonIngressNonRetryableFailure,
       ...(options.adoptionStallTimeoutMs === undefined
         ? {}

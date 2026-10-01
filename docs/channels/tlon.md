@@ -69,7 +69,7 @@ DM the bot or @ mention it in a group channel.
 
 OpenClaw persists accepted Tlon DM and group-channel events before agent dispatch. Pending or retryable turns survive a Gateway restart, and work remains serialized per group channel or direct peer. Stable Urbit message IDs also suppress a redelivered event while its queue record or retained completion record exists.
 
-Here, group channels are configured `chat/~host/channel` nests from Tlon's channels feed. Club or group-DM events from the chat feed are ignored because they do not provide an authenticated member identity.
+Here, group channels are configured `chat/~host/channel` nests from Tlon's channels feed. Club or group-DM events from the chat feed continue to arrive automatically and use the club ID as the trusted conversation identity. Tlon does not bind the event's claimed author to the authenticated Urbit sender, so OpenClaw labels that author as unverified and never grants owner, approval, allowlist, or command authority from the claim. Identity-sensitive actions require an authenticated direct message.
 
 Delivery is at least once across the queue-to-agent boundary: a crash during handoff can replay a turn. Agent actions that produce external side effects should therefore remain idempotent where practical.
 

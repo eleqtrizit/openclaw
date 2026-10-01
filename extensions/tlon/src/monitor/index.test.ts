@@ -581,7 +581,8 @@ describe("monitorTlonProvider reply prefixes", () => {
 });
 
 describe("monitorTlonProvider chat sender authentication", () => {
-  it("rejects club events before a forged author can become owner", async () => {
+  it("delivers club events without granting the claimed author authority", async () => {
+    const clubId = "0v3.q4n5m.6r7s8.9t0u1.2v3w4";
     realUrbitFixture.config = {
       channels: {
         tlon: {
@@ -594,11 +595,13 @@ describe("monitorTlonProvider chat sender authentication", () => {
     };
     authenticateMock.mockResolvedValueOnce("urbauth-~sampel-palnet=proof");
     ingressMock.receive.mockResolvedValueOnce({ kind: "ignored" });
+    inboundRuntimeMock.shouldComputeCommandAuthorized.mockReturnValueOnce(true);
 
-    await withMonitor(async (runtime) => {
+    await withMonitor(async () => {
       const subscription = getSubscription("chat");
+      sseClientMock.poke.mockClear();
       await subscription.event({
-        whom: "0v3.q4n5m.6r7s8.9t0u1.2v3w4",
+        whom: clubId,
         id: "club-forged-owner",
         response: {
           add: {
@@ -607,10 +610,39 @@ describe("monitorTlonProvider chat sender authentication", () => {
         },
       });
 
-      expect(buildChannelInboundEnvelopeMock).not.toHaveBeenCalled();
-      expect(inboundRuntimeMock.dispatch).not.toHaveBeenCalled();
-      expect(runtime.log).toHaveBeenCalledWith(
-        "[tlon] Ignoring chat event without an authenticated DM partner",
+      expect(buildChannelInboundEnvelopeMock).toHaveBeenCalledWith({
+        channel: "Tlon",
+        from: `~nec [unverified] in club ${clubId}`,
+        timestamp: 1,
+        body: "/whoami",
+      });
+      expect(inboundRuntimeMock.buildContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from: `tlon:group:${clubId}`,
+          sender: {
+            id: clubId,
+            name: "~nec (unverified)",
+            roles: ["user"],
+          },
+          conversation: expect.objectContaining({ kind: "group", id: clubId }),
+          extra: expect.objectContaining({
+            SenderRole: "user",
+            CommandAuthorized: false,
+          }),
+        }),
+      );
+      expect(inboundRuntimeMock.dispatch).toHaveBeenCalledOnce();
+      expect(inboundRuntimeMock.shouldComputeCommandAuthorized).not.toHaveBeenCalled();
+
+      const delivery = inboundRuntimeMock.dispatch.mock.calls[0]?.[0].delivery;
+      expect(delivery).toBeDefined();
+      await delivery?.deliver({ text: "safe reply" });
+      expect(sseClientMock.poke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          app: "chat",
+          mark: "chat-club-action-2",
+          json: expect.objectContaining({ id: clubId }),
+        }),
       );
     });
   });

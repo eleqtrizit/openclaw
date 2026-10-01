@@ -170,9 +170,9 @@ describe("Tlon durable ingress", () => {
     });
   });
 
-  it("rejects club events before an untrusted author reaches durable ingress", async () => {
+  it("persists club events on the authenticated conversation lane", async () => {
     await withQueue(async (queue) => {
-      const dispatch = vi.fn();
+      const dispatch = vi.fn(async () => ({ kind: "deferred" }) as const);
       const monitor = startMonitor(queue, dispatch);
       try {
         await expect(
@@ -184,10 +184,15 @@ describe("Tlon durable ingress", () => {
               author: "~nec",
             }),
           }),
-        ).resolves.toEqual({ kind: "ignored" });
+        ).resolves.toEqual({ kind: "accepted" });
         await monitor.waitForIdle();
-        expect(dispatch).not.toHaveBeenCalled();
-        expect(await queue.listClaims()).toEqual([]);
+        expect(dispatch).toHaveBeenCalledOnce();
+        expect(await queue.listClaims()).toEqual([
+          expect.objectContaining({
+            id: "club-forged-owner",
+            laneKey: "club:0v3.q4n5m.6r7s8.9t0u1.2v3w4",
+          }),
+        ]);
       } finally {
         await monitor.stop();
       }
@@ -331,6 +336,68 @@ describe("Tlon durable ingress", () => {
         releaseLegacy.resolve();
         await monitor.waitForIdle();
         expect(delivered).toEqual(["legacy-bare-peer", "new-bare-peer"]);
+      } finally {
+        releaseLegacy.resolve();
+        await monitor.stop();
+      }
+    });
+  });
+
+  it("serializes new club events behind a pre-upgrade author lane", async () => {
+    await withQueue(async (queue) => {
+      const clubId = "0v3.q4n5m.6r7s8.9t0u1.2v3w4";
+      const legacy = chatEvent({
+        id: "legacy-club-event",
+        peer: clubId,
+        author: "~nec",
+      });
+      await queue.enqueue(
+        "legacy-club-event",
+        {
+          version: 1,
+          receivedAt: 1,
+          source: "chat",
+          rawEvent: JSON.stringify(legacy),
+        },
+        { receivedAt: 1, laneKey: "direct:~nec" },
+      );
+      const releaseLegacy = deferred();
+      const delivered: string[] = [];
+      const dispatch = vi.fn<TlonIngressDispatch>(async (_source, event, lifecycle) => {
+        const id = (event as { id: string }).id;
+        delivered.push(id);
+        if (id === "legacy-club-event") {
+          await releaseLegacy.promise;
+        }
+        await lifecycle.onAdopted();
+      });
+      const monitor = startMonitor(queue, dispatch);
+      try {
+        await vi.waitFor(() => expect(delivered).toEqual(["legacy-club-event"]));
+        expect(await queue.listClaims()).toEqual([
+          expect.objectContaining({
+            id: "legacy-club-event",
+            laneKey: `club:${clubId}`,
+          }),
+        ]);
+
+        await monitor.receive({
+          source: "chat",
+          event: chatEvent({ id: "new-club-event", peer: clubId, author: "~bus" }),
+        });
+        await vi.waitFor(async () => {
+          expect(
+            (await queue.listPending({ limit: "all" })).map((record) => [
+              record.id,
+              record.laneKey,
+            ]),
+          ).toContainEqual(["new-club-event", `club:${clubId}`]);
+        });
+        expect(delivered).toEqual(["legacy-club-event"]);
+
+        releaseLegacy.resolve();
+        await monitor.waitForIdle();
+        expect(delivered).toEqual(["legacy-club-event", "new-club-event"]);
       } finally {
         releaseLegacy.resolve();
         await monitor.stop();

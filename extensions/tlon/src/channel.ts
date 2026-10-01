@@ -123,7 +123,7 @@ export const tlonPlugin = createChatChannelPlugin({
         if (parsed.kind === "dm") {
           return parsed.ship;
         }
-        return parsed.nest;
+        return parsed.kind === "club" ? parsed.clubId : parsed.nest;
       },
       inferTargetChatType: ({ to }) => {
         const target = parseTlonTarget(to);

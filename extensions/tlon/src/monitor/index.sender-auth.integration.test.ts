@@ -37,7 +37,7 @@ afterEach(async () => {
 });
 
 describe("monitorTlonProvider production-path sender authentication", () => {
-  it("proves DM delivery and club rejection through real SSE and durable ingress", async () => {
+  it("proves DM and anonymous club delivery through real SSE and durable ingress", async () => {
     const stateDir = tempDirs.make("tlon-production-path-");
     const controller = new AbortController();
     let monitor: ReturnType<typeof monitorTlonProvider> | undefined;
@@ -197,17 +197,23 @@ describe("monitorTlonProvider production-path sender authentication", () => {
       const runtime = { error: vi.fn(), exit: vi.fn(), log: vi.fn() } satisfies RuntimeEnv;
       monitor = monitorTlonProvider({ abortSignal: controller.signal, runtime });
       void monitor.catch(() => {});
-      await vi.waitFor(async () => {
-        expect((await queue.enqueue("legacy-club-forged-owner", legacyPayload)).kind).toBe(
-          "failed",
-        );
-      });
-      await vi.waitFor(() => expect(inboundRuntimeMock.dispatch).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(inboundRuntimeMock.dispatch).toHaveBeenCalledTimes(2));
+      await expect(queue.enqueue("legacy-club-forged-owner", legacyPayload)).resolves.toMatchObject(
+        {
+          kind: "completed",
+        },
+      );
       expect(buildChannelInboundEnvelopeMock).toHaveBeenCalledWith({
         channel: "Tlon",
         from: "~nec [owner]",
         timestamp: 1,
         body: "queued hello",
+      });
+      expect(buildChannelInboundEnvelopeMock).toHaveBeenCalledWith({
+        channel: "Tlon",
+        from: "~nec [unverified] in club 0v3.q4n5m.6r7s8.9t0u1.2v3w4",
+        timestamp: 1,
+        body: "/whoami",
       });
       await vi.waitFor(() => {
         expect(subscriptions).toEqual(
@@ -251,7 +257,7 @@ describe("monitorTlonProvider production-path sender authentication", () => {
           ),
         ),
       );
-      expect(inboundRuntimeMock.dispatch).toHaveBeenCalledOnce();
+      expect(inboundRuntimeMock.dispatch).toHaveBeenCalledTimes(2);
       expect(channelActions).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -280,7 +286,7 @@ describe("monitorTlonProvider production-path sender authentication", () => {
           add: { essay: { author: "~nec", content: [{ inline: ["hello"] }], sent: 3 } },
         },
       });
-      await vi.waitFor(() => expect(inboundRuntimeMock.dispatch).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(inboundRuntimeMock.dispatch).toHaveBeenCalledTimes(3));
       expect(buildChannelInboundEnvelopeMock).toHaveBeenCalledWith({
         channel: "Tlon",
         from: "~nec [owner]",
@@ -297,12 +303,13 @@ describe("monitorTlonProvider production-path sender authentication", () => {
           },
         },
       });
-      await vi.waitFor(() =>
-        expect(runtime.log).toHaveBeenCalledWith(
-          "[tlon] Ignoring chat event without an authenticated DM partner",
-        ),
-      );
-      expect(inboundRuntimeMock.dispatch).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(inboundRuntimeMock.dispatch).toHaveBeenCalledTimes(4));
+      expect(buildChannelInboundEnvelopeMock).toHaveBeenCalledWith({
+        channel: "Tlon",
+        from: "~nec [unverified] in club 0v3.q4n5m.6r7s8.9t0u1.2v3w4",
+        timestamp: 4,
+        body: "/whoami",
+      });
       expect((await queue.listPending({ limit: "all" })).map((record) => record.id)).not.toContain(
         "live-club-forged-owner",
       );

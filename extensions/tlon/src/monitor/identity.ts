@@ -11,3 +11,11 @@ export function extractAuthenticatedDmPartnerShip(whom: unknown): string {
   const normalized = normalizeShip(raw);
   return /^~?[a-z-]+$/i.test(normalized) ? normalized : "";
 }
+
+export function extractClubId(whom: unknown): string {
+  if (typeof whom !== "string") {
+    return "";
+  }
+  const trimmed = whom.trim();
+  return /^0v[0-9a-z]+(?:\.[0-9a-z]+)*$/i.test(trimmed) ? trimmed : "";
+}
