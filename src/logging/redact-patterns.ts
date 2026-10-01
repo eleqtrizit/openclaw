@@ -913,19 +913,19 @@ export const LINEAR_MATCHER_SOURCES: ReadonlyMap<string, ResolvedRedactPattern> 
   string,
   ResolvedRedactPattern
 >([
-  [String.raw`${BASE64_SAFE_TOKEN_BOUNDARY}(gAAAA[A-Za-z0-9_=-]{20,})`, GAAAA_TOKEN_MATCHER],
+  [base64SafeToken(String.raw`gAAAA[A-Za-z0-9_=-]{20,}`), GAAAA_TOKEN_MATCHER],
   [
-    String.raw`${BASE64_SAFE_TOKEN_BOUNDARY}(ATCTT3xFfG[A-Za-z0-9+/=_-]+=[A-Za-z0-9]{8})`,
+    base64SafeToken(String.raw`ATCTT3xFfG[A-Za-z0-9+/=_-]+=[A-Za-z0-9]{8}`),
     ATCTT_TOKEN_MATCHER,
   ],
   [
-    String.raw`${BASE64_SAFE_TOKEN_BOUNDARY}(ATATT[A-Za-z0-9+/=_-]+=[A-Za-z0-9]{8})`,
+    base64SafeToken(String.raw`ATATT[A-Za-z0-9+/=_-]+=[A-Za-z0-9]{8}`),
     ATATT_TOKEN_MATCHER,
   ],
-  [String.raw`${BASE64_SAFE_TOKEN_BOUNDARY}(ATBB[A-Za-z0-9_=.-]{16,})`, ATBB_TOKEN_MATCHER],
-  [String.raw`${BASE64_SAFE_TOKEN_BOUNDARY}(dapi[0-9a-f]{32}(?:-\d)?)`, DAPI_TOKEN_MATCHER],
-  [String.raw`${BASE64_SAFE_TOKEN_BOUNDARY}(AKIA[A-Z0-9]{16})`, AKIA_TOKEN_MATCHER],
-  [String.raw`${BASE64_SAFE_TOKEN_BOUNDARY}(ASIA[A-Z0-9]{16})`, ASIA_TOKEN_MATCHER],
+  [base64SafeToken(String.raw`ATBB[A-Za-z0-9_=.-]{16,}`), ATBB_TOKEN_MATCHER],
+  [base64SafeToken(String.raw`dapi[0-9a-f]{32}(?:-\d)?`), DAPI_TOKEN_MATCHER],
+  [base64SafeToken(String.raw`AKIA[A-Z0-9]{16}`), AKIA_TOKEN_MATCHER],
+  [base64SafeToken(String.raw`ASIA[A-Z0-9]{16}`), ASIA_TOKEN_MATCHER],
   [JWT_REDACT_PATTERN, JWT_MATCHER],
   [URL_USERINFO_REDACT_PATTERN, URL_USERINFO_MATCHER],
   [CONNECTION_STRING_REDACT_PATTERN, CONNECTION_STRING_MATCHER],

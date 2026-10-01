@@ -205,7 +205,8 @@ function parsePattern(raw: RedactPattern): ResolvedRedactPattern | null {
     const [source, flags] = parseRedactPatternSource(raw);
     // Open-ended repeats on flat single-character atoms compile without one backtrack stack
     // entry per repetition, so multi-megabyte values no longer overflow the regex stack.
-    pattern = compileConfigRegex(rewriteOpenEndedRepeats(source), flags)?.regex ?? null;
+    // Flags decide astral-character atom boundaries; unsupported atom shapes stay unchanged.
+    pattern = compileConfigRegex(rewriteOpenEndedRepeats(source, flags), flags)?.regex ?? null;
   }
   if (pattern && typeof raw === "string" && SHELL_REFERENCE_PRESERVING_PATTERN_SOURCES.has(raw)) {
     shellReferencePreservingPatterns.add(pattern);
@@ -245,12 +246,34 @@ function resolvePatterns(value?: readonly RedactPattern[]): ResolvedRedactPatter
     }
     return defaultResolvedPatterns;
   }
-  return [
-    ...new Set([
-      ...value.map(parsePattern).filter((re): re is ResolvedRedactPattern => Boolean(re)),
-      AWS_SECRET_ACCESS_KEY_MATCHER,
-    ]),
-  ];
+  // Combined policies: operator patterns composed with the canonical default arrays. Rule
+  // identity decides provenance, not array identity: each raw entry that is itself a canonical
+  // built-in rule keeps whole-text scanning, while actual operator rules keep bounded scanning.
+  // Provenance is marked on the same object instances the combined array holds, so resolve in
+  // one pass and mark at parse time (parsePattern returns a fresh RegExp per call).
+  const builtInRawSet = new Set<RedactPattern>([
+    ...DEFAULT_REDACT_PATTERNS,
+    ...TOOL_PAYLOAD_REDACT_PATTERNS,
+  ]);
+  const seen = new Set<ResolvedRedactPattern>();
+  const combined: ResolvedRedactPattern[] = [];
+  for (const raw of value) {
+    const resolved = parsePattern(raw);
+    if (!resolved || resolved instanceof Array) {
+      continue;
+    }
+    if (builtInRawSet.has(raw)) {
+      builtInResolvedPatterns.add(resolved);
+    }
+    if (!seen.has(resolved)) {
+      seen.add(resolved);
+      combined.push(resolved);
+    }
+  }
+  if (!seen.has(AWS_SECRET_ACCESS_KEY_MATCHER)) {
+    combined.push(AWS_SECRET_ACCESS_KEY_MATCHER);
+  }
+  return combined;
 }
 
 function usesBuiltInRedactPatterns(value?: readonly RedactPattern[]): boolean {

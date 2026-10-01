@@ -91,8 +91,11 @@ function classAtomEnd(source: string, i: number): number {
  * accept the same strings in the same backtracking order, but the latter never grows one
  * backtrack stack entry per repetition, so multi-megabyte runs no longer overflow.
  * Bounded repeats, quantifiers after groups, and quantified atoms are left untouched.
+ * `flags` decides atom boundaries for literal astral characters: under `u` a surrogate pair
+ * is one atom; without `u` JavaScript quantifies only the trailing code unit, so the pair
+ * must keep its per-unit handling and the original language.
  */
-export function rewriteOpenEndedRepeats(source: string): string {
+export function rewriteOpenEndedRepeats(source: string, flags = ""): string {
   if (!source.includes("{")) {
     return source;
   }
@@ -161,9 +164,12 @@ export function rewriteOpenEndedRepeats(source: string): string {
       continue;
     }
     out += char;
-    // A literal astral character is one atom: splitting a surrogate pair between a quantifier
-    // and its atom changes the pattern's language, so advance through the full code point.
+    // A literal astral character is one atom only under the `u` flag: with `u`, a surrogate
+    // pair is a single code point, so splitting it between a quantifier and its atom changes
+    // the pattern's language. Without `u`, JavaScript quantifies only the trailing code unit,
+    // so the pair must keep its per-unit handling and the original language.
     if (
+      flags.includes("u") &&
       char >= "\uD800" &&
       char <= "\uDBFF" &&
       i + 1 < source.length &&
