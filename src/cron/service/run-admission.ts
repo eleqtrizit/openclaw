@@ -544,6 +544,7 @@ export async function executeQueuedCronRun(params: {
       delete runnableJob.state.queuedAtMs;
       if (
         !isRunnableJob({
+          legacyDefaultAgentId: state.deps.legacyDefaultAgentId,
           job: runnableJob,
           nowMs: state.deps.nowMs(),
           ...params.runnableOptions,
@@ -608,6 +609,7 @@ export async function executeQueuedCronRun(params: {
         runId: taskRunId,
         activeJobMarker,
         runReceipt: started.runReceipt,
+        runReceiptContext: started.runReceiptContext,
         executionIdentity: createCronOwnerExecutionIdentityAdmission({
           state,
           runReceipt: started.runReceipt,

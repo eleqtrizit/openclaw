@@ -43,7 +43,7 @@ import { createAuthenticatedDmApproval, createPendingApproval } from "./approval
 import { resolveChannelAuthorization } from "./authorization.js";
 import { createTlonCitationResolver } from "./cites.js";
 import { prepareAnonymousClubMessage } from "./club-message.js";
-import { fetchAllChannels, fetchInitData } from "./discovery.js";
+import { fetchInitData } from "./discovery.js";
 import { createChannelHistoryCache, fetchThreadHistory } from "./history.js";
 import { extractAuthenticatedDmPartnerShip, extractClubId } from "./identity.js";
 import { createTlonIngressMonitor, type TlonIngressLifecycle } from "./ingress.js";
@@ -536,10 +536,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
 
     const prepareReplyPayload = (payload: ReplyPayload): ReplyPayload => {
       const replyText = payload.text;
-      if (!replyText) {
-        return payload;
-      }
-      if (!effectiveShowModelSig) {
+      if (!replyText || !effectiveShowModelSig) {
         return payload;
       }
       const extPayload = payload as {
@@ -629,7 +626,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
   const watchedChannels = new Set<string>(groupChannels);
 
   const refreshWatchedChannels = async (): Promise<number> => {
-    const discoveredChannels = await fetchAllChannels(api, runtime);
+    const { channels: discoveredChannels } = await fetchInitData(api, runtime);
     let newCount = 0;
     for (const channelNest of discoveredChannels) {
       if (!watchedChannels.has(channelNest)) {
@@ -1312,7 +1309,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
     }
 
     if (effectiveAutoDiscoverChannels) {
-      const discoveredChannels = await fetchAllChannels(api, runtime);
+      const { channels: discoveredChannels } = await fetchInitData(api, runtime);
       for (const channelNest of discoveredChannels) {
         watchedChannels.add(channelNest);
       }
@@ -1334,7 +1331,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
           if (!opts.abortSignal?.aborted) {
             try {
               if (effectiveAutoDiscoverChannels) {
-                const discoveredChannels = await fetchAllChannels(api, runtime);
+                const { channels: discoveredChannels } = await fetchInitData(api, runtime);
                 for (const channelNest of discoveredChannels) {
                   if (!watchedChannels.has(channelNest)) {
                     watchedChannels.add(channelNest);

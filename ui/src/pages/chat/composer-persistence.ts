@@ -13,6 +13,7 @@ import {
 import type { StoredChatOutboxScope } from "../../lib/chat/outbox-store-scope.ts";
 import {
   captureChatOutboxAdmission,
+  notifyDraftPresence,
   notifyStoredChatOutboxChanges,
   readStoredOutboxStore as readStore,
   resolvePendingComposerSessions,
@@ -147,7 +148,7 @@ function persistChatComposerStateResult(
 
 function persistCapturedChatComposerStateResult(
   state: ChatComposerPersistenceState,
-  captured: { scope: StoredChatOutboxScope; awaitingDefaults: boolean; incognito?: boolean },
+  captured: ReturnType<typeof captureChatOutboxAdmission> & { incognito?: boolean },
   options: ChatComposerPersistOptions = {},
 ): ChatComposerPersistStatus {
   const storage = getSafeSessionStorage();
@@ -235,9 +236,7 @@ function persistCapturedChatComposerStateResult(
       // Notify only on presence transitions: sidebar draft indicators consume
       // presence, and content-only notifies would let projection subscribers
       // re-persist a stale pane over a newer draft (route-fallback invariant).
-      if (Boolean(storedDraft || session?.replyTarget) !== Boolean(draft || replyTarget)) {
-        notifyStoredChatOutboxChanges();
-      }
+      notifyDraftPresence({ ...session, draft: storedDraft }, { draft, goalMode, replyTarget });
       // Subscribers can reveal private-session metadata while the controller's
       // reentrancy guard defers its next write. Retire that captured scope now.
       if (
@@ -498,11 +497,7 @@ export class ChatComposerPersistence {
   private durableRestoreProtected = false;
   // A transient disconnect invalidates scope readiness, not the owner authenticated
   // by this client. Client or Gateway replacement still fences the cached owner.
-  private durableOwner: {
-    client: ChatComposerPersistenceState["client"];
-    gatewayOwner: string;
-    recoveryScope: string;
-  } | null = null;
+  private durableOwner: ReturnType<typeof captureChatComposerOwner> | null = null;
   private durableRetiredScopeKey = "";
   private forceDurableOwnerRestore = false;
   private readonly durablePersistence = new DurableChatComposerPersistence(
