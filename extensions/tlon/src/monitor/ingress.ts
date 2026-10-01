@@ -78,16 +78,9 @@ function inspectChatEvent(
   if (!essay || !eventId) {
     return null;
   }
-  const rawWhom = isRecord(envelope?.whom)
-    ? nonEmptyString(envelope.whom.ship)
-    : nonEmptyString(envelope?.whom);
   const peer = extractAuthenticatedDmPartnerShip(envelope?.whom);
   if (peer) {
-    const legacyLaneKey = rawWhom ? `direct:${rawWhom}` : null;
-    // Keep validated peers on their raw whom lane. Older releases persisted that
-    // form, so normalizing only new admissions could split one conversation
-    // across two concurrent drains during an upgrade.
-    return { eventId, laneKey: legacyLaneKey ?? `direct:${peer}` };
+    return { eventId, laneKey: `direct:${peer}` };
   }
   const clubId = extractClubId(envelope?.whom);
   return clubId ? { eventId, laneKey: `club:${clubId}` } : null;
@@ -219,18 +212,27 @@ export function createTlonIngressMonitor(options: {
           (payload.source !== "channels" && payload.source !== "chat") ||
           typeof payload.rawEvent !== "string"
         ) {
-          return undefined;
+          return record.laneKey;
         }
         try {
           return inspectTlonIngressEvent(payload.source, JSON.parse(payload.rawEvent), {
             phase: "admission",
           })?.laneKey;
         } catch {
-          return undefined;
+          // Preserve the stored lane; claim-time decoding will dead-letter invalid JSON.
+          return record.laneKey;
         }
       },
-      reconcileStoredLaneKey: (_record, storedLaneKey, derivedLaneKey) =>
-        storedLaneKey.startsWith("direct:") && derivedLaneKey.startsWith("club:"),
+      reconcileStoredLaneKey: (_record, storedLaneKey, derivedLaneKey) => {
+        if (!storedLaneKey.startsWith("direct:")) {
+          return false;
+        }
+        if (derivedLaneKey.startsWith("club:")) {
+          return true;
+        }
+        const storedPeer = extractAuthenticatedDmPartnerShip(storedLaneKey.slice("direct:".length));
+        return derivedLaneKey === `direct:${storedPeer}`;
+      },
       resolveNonRetryableFailure: resolveTlonIngressNonRetryableFailure,
       ...(options.adoptionStallTimeoutMs === undefined
         ? {}

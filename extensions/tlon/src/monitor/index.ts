@@ -36,18 +36,21 @@ import { resolveTlonAccount } from "../types.js";
 import { authenticate } from "../urbit/auth.js";
 import { ssrfPolicyFromDangerouslyAllowPrivateNetwork } from "../urbit/context.js";
 import type { DmInvite, Foreigns } from "../urbit/foreigns.js";
-import { sendClubMessage, sendDm, sendGroupMessage } from "../urbit/send.js";
+import { sendDm, sendGroupMessage } from "../urbit/send.js";
 import { UrbitSSEClient } from "../urbit/sse-client.js";
 import { createTlonApprovalRuntime } from "./approval-runtime.js";
 import { createAuthenticatedDmApproval, createPendingApproval } from "./approval.js";
 import { resolveChannelAuthorization } from "./authorization.js";
 import { createTlonCitationResolver } from "./cites.js";
+import { prepareAnonymousClubMessage } from "./club-message.js";
 import { fetchAllChannels, fetchInitData } from "./discovery.js";
 import { createChannelHistoryCache, fetchThreadHistory } from "./history.js";
 import { extractAuthenticatedDmPartnerShip, extractClubId } from "./identity.js";
 import { createTlonIngressMonitor, type TlonIngressLifecycle } from "./ingress.js";
 import { buildTlonInboundMediaPrompt, downloadMessageImages } from "./media.js";
 import { prepareTlonGroupAdmission } from "./mentions.js";
+import { deliverTlonReply } from "./reply-delivery.js";
+import { resolveTlonSenderPresentation } from "./sender-presentation.js";
 import {
   applyTlonSettingsOverrides,
   buildTlonSettingsMigrations,
@@ -307,8 +310,8 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
       turnAdoptionLifecycle,
       resolveChannelIngress,
     } = params;
-    const senderAuthenticated = params.senderAuthenticated !== false;
-    const groupId = channelNest ?? clubId;
+    const senderPresentation = resolveTlonSenderPresentation(params, isOwner(senderShip));
+    const { senderAuthenticated, groupId, senderRole, fromLabel } = senderPresentation;
     let messageText = params.messageText;
 
     let attachments: Array<{ path: string; contentType: string }> = [];
@@ -448,13 +451,6 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
       senders.add(senderShip);
     }
 
-    const senderRole = senderAuthenticated && isOwner(senderShip) ? "owner" : "user";
-    const fromLabel = clubId
-      ? `${senderShip || "unknown"} [unverified] in club ${clubId}`
-      : isGroup
-        ? `${senderShip} [${senderRole}] in ${channelNest}`
-        : `${senderShip} [${senderRole}]`;
-
     const shouldComputeAuth =
       senderAuthenticated && core.channel.commands.shouldComputeCommandAuthorized(messageText, cfg);
     let commandAuthorized = false;
@@ -499,11 +495,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
       messageId,
       timestamp,
       from: isGroup ? `tlon:group:${tlonConversationId}` : `tlon:${senderShip}`,
-      sender: {
-        id: clubId ?? senderShip,
-        name: clubId ? `${senderShip || "unknown"} (unverified)` : senderShip,
-        roles: [senderRole],
-      },
+      sender: senderPresentation.sender,
       conversation: {
         kind: isGroup ? "group" : "direct",
         id: tlonConversationId,
@@ -602,39 +594,15 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
             return { visibleReplySent: false };
           }
 
-          if (clubId) {
-            await sendClubMessage({
-              api,
-              fromShip: botShipName,
-              clubId,
-              text: replyText,
-            });
-            return { visibleReplySent: true };
-          }
-
-          if (isGroup && channelNest) {
-            const parsed = parseChannelNest(channelNest);
-            if (!parsed) {
-              return { visibleReplySent: false };
-            }
-            await sendGroupMessage({
-              api,
-              fromShip: botShipName,
-              hostShip: parsed.hostShip,
-              channelName: parsed.channelName,
-              text: replyText,
-              replyToId: parentId ?? undefined,
-            });
-            return { visibleReplySent: true, replyToId: parentId ?? undefined };
-          }
-
-          await sendDm({
+          return await deliverTlonReply({
             api,
-            fromShip: botShipName,
-            toShip: senderShip,
+            botShipName,
+            senderShip,
             text: replyText,
+            channelNest,
+            clubId,
+            parentId,
           });
-          return { visibleReplySent: true };
         },
         onDelivered: (_payload, _info, result) => {
           rememberThreadParticipation(result);
@@ -981,27 +949,19 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
 
       const messageText = rawText;
       if (clubId) {
-        const resolvedMessageText = (await resolveAllCites(essay.content)) + rawText;
-        await processMessage({
-          messageText: resolvedMessageText,
-          messageId,
-          senderShip,
-          messageContent: essay.content,
-          isGroup: true,
-          clubId,
-          senderAuthenticated: false,
-          timestamp: asFiniteNumber(essay?.sent) ?? Date.now(),
-          turnAdoptionLifecycle,
-          resolveChannelIngress: async (contextBinding) =>
-            await resolveTlonMessageIngress({
-              senderShip: clubId,
-              accountId: account.accountId,
-              conversation: { kind: "group", id: clubId },
-              allowFrom: [],
-              groupPolicy: "open",
-              contextBinding,
-            }),
-        });
+        await processMessage(
+          await prepareAnonymousClubMessage({
+            accountId: account.accountId,
+            clubId,
+            claimedAuthorShip: senderShip,
+            messageId,
+            messageContent: essay.content,
+            rawText,
+            timestamp: asFiniteNumber(essay?.sent) ?? Date.now(),
+            turnAdoptionLifecycle,
+            resolveAllCites,
+          }),
+        );
         return;
       }
 

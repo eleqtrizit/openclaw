@@ -292,7 +292,7 @@ describe("Tlon durable ingress", () => {
     });
   });
 
-  it("serializes new bare-peer DMs behind a pre-upgrade raw-lane backlog", async () => {
+  it("canonicalizes new bare-peer DMs behind a pre-upgrade raw-lane backlog", async () => {
     await withQueue(async (queue) => {
       const legacy = chatEvent({ id: "legacy-bare-peer", peer: "nec" });
       await queue.enqueue(
@@ -318,6 +318,9 @@ describe("Tlon durable ingress", () => {
       const monitor = startMonitor(queue, dispatch);
       try {
         await vi.waitFor(() => expect(delivered).toEqual(["legacy-bare-peer"]));
+        expect(await queue.listClaims()).toEqual([
+          expect.objectContaining({ id: "legacy-bare-peer", laneKey: "direct:~nec" }),
+        ]);
 
         await monitor.receive({
           source: "chat",
@@ -329,7 +332,7 @@ describe("Tlon durable ingress", () => {
               record.id,
               record.laneKey,
             ]),
-          ).toContainEqual(["new-bare-peer", "direct:nec"]);
+          ).toContainEqual(["new-bare-peer", "direct:~nec"]);
         });
         expect(delivered).toEqual(["legacy-bare-peer"]);
 
