@@ -14,6 +14,30 @@ const BOUNDED_REPEAT_RE = /^\{(?:\d+(?:,\d*)?|,\d+)\}/;
 const HEX_DIGIT_RE = /[0-9A-Fa-f]/;
 const ASSERTION_ESCAPE_CHARS = new Set(["b", "B"]);
 
+const escapeHexValue = (source: string, at: number): number | null => {
+  let value = 0;
+  for (let index = 0; index < 4; index += 1) {
+    const digit = source[at + index];
+    if (digit === undefined || !HEX_DIGIT_RE.test(digit)) {
+      return null;
+    }
+    value = value * 16 + Number.parseInt(digit, 16);
+  }
+  return value;
+};
+
+/** True when the escape at `i` is a `\uXXXX` high-surrogate escape. */
+const isHighSurrogateEscape = (source: string, i: number): boolean => {
+  const value = escapeHexValue(source, i + 2);
+  return value !== null && value >= 0xd800 && value <= 0xdbff;
+};
+
+/** True when the escape at `i` is a `\uXXXX` low-surrogate escape. */
+const isLowSurrogateEscape = (source: string, i: number): boolean => {
+  const value = escapeHexValue(source, i + 2);
+  return value !== null && value >= 0xdc00 && value <= 0xdfff;
+};
+
 /** End index (exclusive) of the single atom introduced by the escape at `i` (a backslash), or -1. */
 function escapeAtomEnd(source: string, i: number): number {
   const kind = source[i + 1];
@@ -112,6 +136,22 @@ export function rewriteOpenEndedRepeats(source: string, flags = ""): string {
         out += char;
         i += 1;
         atomStart = -1;
+        continue;
+      }
+      // Adjacent `\uD83D\uDE00` escapes form one complete atom under the `u` flag: a
+      // following quantifier must repeat the pair, not its trailing code unit. Rewriting
+      // them independently changes the configured pattern's language.
+      if (
+        flags.includes("u") &&
+        isHighSurrogateEscape(source, i) &&
+        source[end] === "\\" &&
+        isLowSurrogateEscape(source, end)
+      ) {
+        const pairEnd = escapeAtomEnd(source, end);
+        out += source.slice(i, pairEnd);
+        atomStart = i;
+        atomEnd = pairEnd;
+        i = pairEnd;
         continue;
       }
       out += source.slice(i, end);

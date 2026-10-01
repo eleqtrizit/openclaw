@@ -389,6 +389,14 @@ function isAlnumChar(char: string | undefined): boolean {
   return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 }
 
+function isLetterChar(char: string | undefined): boolean {
+  if (char === undefined) {
+    return false;
+  }
+  const code = char.charCodeAt(0);
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
 function isWordChar(char: string | undefined): boolean {
   return char === "_" || isAlnumChar(char);
 }
@@ -703,8 +711,11 @@ function makeUserInfoMatcher(
       if (
         !schemes.has(scheme) &&
         schemeStart >= 8 &&
+        scheme === "srv" &&
         text.slice(schemeStart - 8, schemeStart).toLowerCase() === "mongodb+"
       ) {
+        // Only the actual `mongodb+srv` shape extends the word run; other suffixes after
+        // `mongodb+` keep their original path and stay unmasked by the connection scanner.
         scheme = "mongodb+srv";
         matchStart = schemeStart - 8;
       }
@@ -771,7 +782,10 @@ const FORM_FIRST_PAIR_TAIL_CHAR = (char: string | undefined): boolean =>
 
 /** The lookahead `&[A-Za-z_][A-Za-z0-9_.-]*=` is a deterministic forward check. */
 function isFormPairBoundary(text: string, ampersand: number): boolean {
-  if (!isAlnumChar(text[ampersand + 1]) && text[ampersand + 1] !== "_") {
+  // The original lookahead requires a letter or underscore as the second key's first
+  // character; digits do not start a form key, so `session=publicvalue&1=x` stays unmasked.
+  const first = text[ampersand + 1];
+  if (!(first !== undefined && (isLetterChar(first) || first === "_"))) {
     return false;
   }
   const keyEnd = runEndOf(text, ampersand + 2, FORM_FIRST_PAIR_TAIL_CHAR);
