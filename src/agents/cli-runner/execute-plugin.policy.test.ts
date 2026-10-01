@@ -176,6 +176,131 @@ describe("plugin-owned CLI native tool policy", () => {
     });
   });
 
+  it.each([
+    { permissionMode: "read-only", message: "OpenClaw exec policy denied" },
+    { permissionMode: "guarded", message: "OpenClaw approval was not granted" },
+  ] as const)(
+    "preserves $permissionMode session permissions when the policy session key differs",
+    async ({ permissionMode, message }) => {
+      const { context } = await createExecution({
+        config: { tools: { exec: { security: "full", ask: "off" } } },
+        sessionEntry: { sessionId: "sdk-session", updatedAt: 1, permissionMode },
+        nativeTools: ["Bash"],
+      });
+      context.params.runtimePolicySessionKey = "agent:main:direct:requester";
+
+      await runPlugin(context, async function* (execution) {
+        await expect(
+          requestNativeTool(execution, "Bash", { command: "echo blocked" }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            behavior: "deny",
+            message: expect.stringContaining(message),
+          }),
+        );
+        yield SUCCESS_RESULT;
+      });
+    },
+  );
+
+  it("maps native Grep to read policy and its native path schema", async () => {
+    const workspaceDir = path.join(process.cwd(), "native-grep-workspace");
+    const projectNativeToolAuthority = (tools: readonly string[]) =>
+      tools.some((tool) => tool.toLowerCase() === "grep") ? ["read"] : [];
+    const { context } = await createExecution({
+      config: {
+        tools: {
+          allow: ["read"],
+          fs: { workspaceOnly: true },
+          exec: { security: "full", ask: "off" },
+        },
+      },
+      nativeTools: ["Grep"],
+      workspaceDir,
+      projectNativeToolAuthority,
+    });
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        execution.requestToolPermission({
+          toolName: "Grep",
+          toolInput: { pattern: "needle", path: ".", glob: "*.ts" },
+          cwd: workspaceDir,
+        }),
+      ).resolves.toEqual({
+        behavior: "allow",
+        updatedInput: { pattern: "needle", path: ".", glob: "*.ts" },
+      });
+      await expect(
+        execution.requestToolPermission({
+          toolName: "Grep",
+          toolInput: { pattern: "needle", path: "/etc" },
+          cwd: workspaceDir,
+        }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: expect.stringMatching(/^Path escapes sandbox root/),
+      });
+      yield SUCCESS_RESULT;
+    });
+  });
+
+  it("applies read deny policy to native Grep", async () => {
+    const { context } = await createExecution({
+      config: {
+        tools: {
+          deny: ["read"],
+          exec: { security: "full", ask: "off" },
+        },
+      },
+      nativeTools: ["Grep"],
+      projectNativeToolAuthority: () => ["read"],
+    });
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        requestNativeTool(execution, "Grep", { pattern: "needle", path: "." }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: "OpenClaw tool policy denied native tool read.",
+      });
+      yield SUCCESS_RESULT;
+    });
+  });
+
+  it("revalidates a hook-rewritten native Grep path", async () => {
+    const workspaceDir = path.join(process.cwd(), "native-grep-rewrite-workspace");
+    const hook = vi.fn(async () => ({ params: { pattern: "needle", path: "/etc" } }));
+    installBeforeToolCallHook(hook, ["read"]);
+    const { context } = await createExecution({
+      config: {
+        tools: {
+          allow: ["read"],
+          fs: { workspaceOnly: true },
+          exec: { security: "full", ask: "off" },
+        },
+      },
+      nativeTools: ["Grep"],
+      workspaceDir,
+      projectNativeToolAuthority: () => ["read"],
+    });
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        execution.requestToolPermission({
+          toolName: "Grep",
+          toolInput: { pattern: "needle" },
+          cwd: workspaceDir,
+        }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: expect.stringMatching(/^Path escapes sandbox root/),
+      });
+      yield SUCCESS_RESULT;
+    });
+    expect(hook).toHaveBeenCalledOnce();
+  });
+
   it.each(["Read", "Write", "Edit"])(
     "enforces workspaceOnly for native %s paths",
     async (native) => {

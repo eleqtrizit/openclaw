@@ -30,6 +30,7 @@ export async function createExecution(
     runId?: string;
     resumeArgs?: string[];
     workspaceDir?: string;
+    projectNativeToolAuthority?: PreparedCliRunContext["backendResolved"]["projectNativeToolAuthority"];
   } = {},
 ) {
   const runId = options.runId ?? `plugin-owner-${++nextRunId}`;
@@ -46,6 +47,7 @@ export async function createExecution(
     prompt: "hello",
     config,
     workspaceDir: options.workspaceDir,
+    projectNativeToolAuthority: options.projectNativeToolAuthority,
     executionMode: "agent",
     timeoutMs: options.timeoutMs ?? 5_000,
     sessionEntry: options.sessionEntry,

@@ -41,13 +41,12 @@ import {
   requestCliNativeToolApproval,
   resolveCliNativeToolApprovalPlan,
 } from "./cli-native-tool-approval.js";
-import { resolveCliNativeToolPolicy } from "./cli-native-tool-policy.js";
+import * as nativePolicy from "./cli-native-tool-policy.js";
 import { createCliAbortError } from "./execute-node-claude.js";
 import { createCliPluginWatchdog, type CliWatchdogClock } from "./execute-plugin-watchdog.js";
 import { attachCliReplyBackend, createCliRunCurrentAssertion } from "./execution-target.js";
 import { createCliFailoverError as failover } from "./exit-error.js";
 import * as noOutputPolicy from "./no-output-timeout-policy.js";
-import { normalizeCliToolName } from "./tool-policy.js";
 import type { PreparedCliRunContext } from "./types.js";
 
 const PLUGIN_ITERATOR_CLOSE_TIMEOUT_MS = 5_000;
@@ -64,7 +63,7 @@ function createPluginToolPermissionHandler(params: {
 }): (request: CliBackendToolPermissionRequest) => Promise<CliBackendToolPermissionResult> {
   const run = params.context.params;
   const { permission, policySessionKey, policyAgentId, effectiveToolPolicies, fsWorkspaceOnly } =
-    resolveCliNativeToolPolicy(params.context);
+    nativePolicy.resolveCliNativeToolPolicy(params.context);
   const preparedCwd = params.context.cwd ?? params.context.workspaceDir;
   const assertNativeFilePath = async (filePath: string, nativeCwd?: string) => {
     if (!fsWorkspaceOnly) {
@@ -103,23 +102,34 @@ function createPluginToolPermissionHandler(params: {
       return denyTool(`OpenClaw denied native tool ${toolName}: it is unavailable to this run.`);
     }
 
-    // Provider schemas are not policy schemas: match canonical names and file operands.
-    const canonicalToolName = normalizeCliToolName(toolName);
+    // Provider schemas are not policy schemas: match backend-projected capabilities and operands.
+    const { nativeToolName, canonicalToolName } = nativePolicy.resolveCliNativeToolPolicyName(
+      params.context,
+      toolName,
+    );
     if (!isToolAllowedByPolicies(canonicalToolName, effectiveToolPolicies)) {
       return denyTool(`OpenClaw tool policy denied native tool ${canonicalToolName}.`);
     }
+    const nativeGrepTool = nativeToolName === "grep" && canonicalToolName === "read";
     const canonicalFileTool = ["read", "write", "edit"].includes(canonicalToolName);
-    const nativeFileTool = canonicalFileTool && Object.hasOwn(request.toolInput, "file_path");
+    const nativeFileTool =
+      canonicalFileTool && (nativeGrepTool || Object.hasOwn(request.toolInput, "file_path"));
     if (canonicalFileTool && !nativeFileTool) {
       return denyTool("OpenClaw denied native file tool use: invalid file path.");
     }
     let policyInput = request.toolInput;
     if (nativeFileTool) {
-      const nativePath = request.toolInput.file_path;
+      const nativePath = nativeGrepTool
+        ? (request.toolInput.path ?? ".")
+        : request.toolInput.file_path;
       if (typeof nativePath !== "string") {
         return denyTool("OpenClaw denied native file tool use: invalid file path.");
       }
-      if (Object.hasOwn(request.toolInput, "path") && request.toolInput.path !== nativePath) {
+      if (
+        !nativeGrepTool &&
+        Object.hasOwn(request.toolInput, "path") &&
+        request.toolInput.path !== nativePath
+      ) {
         return denyTool("OpenClaw denied native file tool use: conflicting file paths.");
       }
       try {
@@ -127,7 +137,11 @@ function createPluginToolPermissionHandler(params: {
       } catch (error) {
         return denyTool(error instanceof Error ? error.message : String(error));
       }
-      policyInput = { ...request.toolInput, path: nativePath };
+      policyInput = nativeGrepTool
+        ? Object.hasOwn(request.toolInput, "path")
+          ? request.toolInput
+          : { ...request.toolInput, path: nativePath }
+        : { ...request.toolInput, path: nativePath };
       if (canonicalToolName === "edit") {
         const { old_string: oldText, new_string: newText, edits } = request.toolInput;
         if (typeof oldText !== "string" || typeof newText !== "string") {
@@ -208,7 +222,7 @@ function createPluginToolPermissionHandler(params: {
       }
       if (toolInput === policyInput) {
         toolInput = request.toolInput;
-      } else {
+      } else if (!nativeGrepTool) {
         toolInput = { ...toolInput, file_path: toolInput.path };
         if (!Object.hasOwn(request.toolInput, "path")) {
           delete toolInput.path;
