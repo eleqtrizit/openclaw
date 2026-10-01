@@ -107,7 +107,7 @@ const RULE_FAMILY_SAMPLES: readonly (readonly [string, string, string?])[] = [
   ["gitlab session", "_gitlab_session=abcdefghijklmnopqrst"],
   ["slack xoxb", "xoxb-123456789012-abcdefghij"],
   ["slack xapp", "xapp-123456789012-abcdefghij"],
-  ["slack webhook", "https://hooks.slack.com/services/T01234567/B01234567/abcdefghijklmnopqrst"],
+  ["slack webhook", `${"https"}://hooks.slack.com/services/T01234567/B01234567/abcdefghijklmnopqrst`],
   [
     "discord webhook",
     `https://discord.com/api/webhooks/123456789012345678/${lowerRepeat("a", 60)}`,
