@@ -11,8 +11,11 @@ const DEFAULT_REDACT_PREFILTER_SOURCES: string[] = [
   String.raw`\bBearer\s+`,
   // URL userinfo and connection-string password slots (`scheme://user:pass@host`). Anchored at
   // the `@` so texts without one (e.g. repeated `postgres://u:` runs) scan linearly instead of
-  // rescanning a whole run from every `://`; the lookbehind only engages at `@` positions.
-  String.raw`(?<=:\/\/[^\/\s:@]*:[^\s@]+)@`,
+  // rescanning a whole run from every `://`. The backward user/pass runs stay bounded: an
+  // unbounded leading lookbehind makes JSC backtrack the whole preceding text at every
+  // position of texts with no `@` at all (11s+ on a 100k-char input), which silently stalled
+  // redaction callers. Real userinfo is far shorter than the bound.
+  String.raw`(?<=:\/\/[^\/\s:@]{0,512}:[^\s@]{0,512})@`,
   // Vendor token prefixes and webhook hosts, ordered like DEFAULT_REDACT_PATTERNS.
   String.raw`sk-|gh[opsur]_|github_pat_|glpat-|gloas-|gldt-|glcbt-|glptt-|glft-|glimt-|glagent-|glwt-|glsoat-|glffct-|glrt-|glrtr-|GR1348941|_gitlab_session=|xox[baprs]-|xapp-|hooks\.slack\.com|discord|gsk_|AIza|ya29\.|1\/\/0|eyJ|pplx-|fal_|fc-|bb_live_|gAAAA|[sr]k_(?:live|test)_|SG\.|npm_|pypi-|do[opr]_v1_|dp\.(?:ct|pt|sa|st|scim|audit)\.|dckr_|bkua_|CCIPAT_|sbp_|dapi[0-9a-f]|dd[pw]_|glsa_|nfp_|CFPAT-|ATCTT3|ATATT|ATBB|BBDC-|HRKU-|pat-(?:eu|na)1-|apify_api_|FlyV1|fio-u-|tvly-|exa_|syt_|retaindb_|mem0_|brv_|xai-|fw-|fw_|fpk_`,
   String.raw`(?:^|[^A-Za-z0-9_])(?:am_|sk_)`,
@@ -23,13 +26,17 @@ const DEFAULT_REDACT_PREFILTER_SOURCES: string[] = [
   // at `=` positions, and like the forward form it fires when any percent escape precedes the
   // key characters that run up to that `=`. A forward scan at every position is quadratic on
   // adversarial percent-escape runs, which silently stalled redaction callers.
-  String.raw`(?<=%[0-9A-Fa-f]{2}[${FORM_BODY_KEY_INVISIBLE_CHARS}+A-Za-z0-9_%.-]*)=`,
+  String.raw`(?<=%[0-9A-Fa-f]{2}[${FORM_BODY_KEY_INVISIBLE_CHARS}+A-Za-z0-9_%.-]{0,512})=`,
   // Search at the required assignment separator, not at every invisible character: the key run
   // right before `=` must hold a splice and a key character. Two flat lookbehinds keep that to
   // plain character-class scans. A repeated group inside the lookbehind made JSC abandon the whole
   // match (no error, no match) once the run before `=` passed roughly 70k characters, which
-  // silently skipped default redaction for long texts on Bun.
-  String.raw`=(?<=[${FORM_BODY_KEY_INVISIBLE_CHARS}+][${FORM_BODY_KEY_INVISIBLE_CHARS}+A-Za-z0-9_%.-]*=)(?<=[A-Za-z0-9_%.-][${FORM_BODY_KEY_INVISIBLE_CHARS}+A-Za-z0-9_%.-]*=)`,
+  // silently skipped default redaction for long texts on Bun. The key-run quantifier stays
+  // bounded: an unbounded `*` over a `+`-joined token run with no earlier `=` behind it makes JSC
+  // backtrack the whole run at the `=` in quadratic time (40s+ on a 100k-char input), which
+  // silently stalled redaction callers. Real keys are far shorter than the bound, so matching
+  // semantics only change for key runs longer than 512 characters, which are not secret-bearing.
+  String.raw`=(?<=[${FORM_BODY_KEY_INVISIBLE_CHARS}+][${FORM_BODY_KEY_INVISIBLE_CHARS}+A-Za-z0-9_%.-]{0,512}=)(?<=[A-Za-z0-9_%.-][${FORM_BODY_KEY_INVISIBLE_CHARS}+A-Za-z0-9_%.-]{0,512}=)`,
 ];
 const DEFAULT_REDACT_PREFILTER_RE = new RegExp(
   `(?:${DEFAULT_REDACT_PREFILTER_SOURCES.join("|")})`,
