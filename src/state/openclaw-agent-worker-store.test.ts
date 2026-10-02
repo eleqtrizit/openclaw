@@ -7,8 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
 import { SQLITE_IDLE_HANDLE_TTL_MS } from "../infra/sqlite-handle-lifecycle.js";
+import { observeSqliteWalPeriodicWork } from "../infra/sqlite-wal-scheduler.test-support.js";
 import * as sqliteWal from "../infra/sqlite-wal.js";
 import * as admission from "../infra/sqlite-worker-operation-admission.js";
+import {
+  markGatewayRestartDraining,
+  resetGatewayWorkAdmission,
+} from "../process/gateway-work-admission.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { closeOpenClawAgentDatabasesAsync } from "./openclaw-agent-db-lifecycle.js";
 import { revokeAgentDatabaseResources } from "./openclaw-agent-db-resources.js";
@@ -135,6 +140,51 @@ it("retains an idle agent executor for thirty minutes and renews the window afte
     ]);
   } finally {
     vi.useRealTimers();
+    releaseState();
+  }
+});
+
+it("keeps accepted publications on one lease through restart drain and joins it on close", async () => {
+  const { db, worker } = await setup();
+  const shared = openOpenClawStateDatabase();
+  const releaseState = retainOpenClawStateDatabaseForIdle(shared);
+  const readLeases = () =>
+    shared.db
+      .prepare("SELECT lease_id FROM agent_database_leases WHERE path = ? ORDER BY lease_id")
+      .all(options.path);
+  const hostLeases = readLeases();
+  try {
+    const firstThread = await worker.run(
+      async (scope) => {
+        const thread = await scope.execute({ type: "append", input: { value: "first" } });
+        markGatewayRestartDraining();
+        return thread;
+      },
+      () => undefined,
+    );
+    const retainedLeases = readLeases();
+    const secondThread = await worker.execute(
+      { type: "append", input: { value: "second" } },
+      () => undefined,
+    );
+    expect(secondThread).toBe(firstThread);
+    expect(retainedLeases).toHaveLength(hostLeases.length + 1);
+    expect(readLeases()).toEqual(retainedLeases);
+    await worker.run(
+      (scope) => scope.execute({ type: "append", input: { value: "third" } }),
+      () => undefined,
+    );
+    expect(readLeases()).toEqual(retainedLeases);
+    await worker.close();
+    expect(readLeases()).toEqual(hostLeases);
+    expect(db.prepare("SELECT value FROM worker_proof ORDER BY rowid").all()).toEqual([
+      { value: "first" },
+      { value: "second" },
+      { value: "third" },
+    ]);
+  } finally {
+    await worker.close();
+    resetGatewayWorkAdmission();
     releaseState();
   }
 });
@@ -677,8 +727,8 @@ describe.each(["borrowed", "captured"] as const)(
       }
     });
     it("queues a real periodic maintenance tick behind publication", async () => {
-      let tick: (() => void) | undefined;
       let capturing = false;
+      const scheduled = observeSqliteWalPeriodicWork(() => capturing);
       const configure = sqliteWal.configureSqliteConnectionPragmas;
       vi.spyOn(sqliteWal, "configureSqliteConnectionPragmas").mockImplementation((db, policy) => {
         capturing = policy?.databasePath === options.path;
@@ -688,17 +738,8 @@ describe.each(["borrowed", "captured"] as const)(
           capturing = false;
         }
       });
-      const interval = globalThis.setInterval;
-      vi.spyOn(globalThis, "setInterval").mockImplementation((handler, milliseconds, ...args) => {
-        if (capturing && typeof handler === "function") {
-          tick = () => handler(...args);
-        }
-        return interval(handler, milliseconds, ...args);
-      });
-      const { db, worker } = await setup();
-      if (!tick) {
-        throw new Error("Expected the canonical agent maintenance timer");
-      }
+      const { db, worker } = await setup().finally(scheduled.restore);
+      const tick = scheduled.periodic;
       db.exec(`INSERT INTO cache_entries(scope, key, blob, updated_at)
         VALUES ('maintenance-proof', 'pages', zeroblob(4194304), 1);
         DELETE FROM cache_entries WHERE scope = 'maintenance-proof';`);
@@ -718,11 +759,12 @@ describe.each(["borrowed", "captured"] as const)(
       );
       await waitForMarker(transactionMarker, work);
       const started = performance.now();
-      tick();
+      const maintenance = Promise.resolve(tick());
       expect(performance.now() - started).toBeLessThan(100);
       expect(exec.mock.calls.some(([sql]) => sql.includes("incremental_vacuum"))).toBe(false);
       expect(freePages()).toBe(before);
       await work;
+      await maintenance;
       await withOpenClawAgentDatabaseWrite(options, () => undefined, db);
       expect(exec.mock.calls.some(([sql]) => sql.includes("incremental_vacuum"))).toBe(false);
       expect(before - freePages()).toBeGreaterThan(0);

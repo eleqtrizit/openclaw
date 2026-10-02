@@ -300,7 +300,8 @@ async function runMatrixMonitorSession(
   const warnedEncryptedRooms = new Set<string>();
   const warnedCryptoMissingRooms = new Set<string>();
   let healthySyncSinceMs: number | undefined;
-  const noteSyncHealthState = (state: MatrixSyncState, at = Date.now()) => {
+  const onSyncState = (state: MatrixSyncState) => {
+    const at = Date.now();
     if (isMatrixReadySyncState(state)) {
       healthySyncSinceMs ??= at;
       return;
@@ -308,9 +309,6 @@ async function runMatrixMonitorSession(
     if (isMatrixDisconnectedSyncState(state)) {
       healthySyncSinceMs = undefined;
     }
-  };
-  const onSyncState = (state: MatrixSyncState) => {
-    noteSyncHealthState(state);
   };
   const monitorRetirement = {
     closeTaskAdmission: () => {

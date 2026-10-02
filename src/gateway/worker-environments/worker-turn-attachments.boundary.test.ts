@@ -24,6 +24,7 @@ import {
   createWorkerSessionTurnPlacementProvider,
   credential,
   measureLaunchTurn,
+  readLaunchToolNames,
   openSessionManager,
   placements,
   root,
@@ -146,6 +147,7 @@ describe("current attachments in an active remote placement", () => {
           });
         }),
         measureLaunchTurn,
+        readLaunchToolNames,
         stageAttachments: async (request) => {
           const service = createNodeWorkspaceTransferService({
             getOwner: () => ({
@@ -216,7 +218,7 @@ describe("current attachments in an active remote placement", () => {
               stopReason: "stop",
               timestamp: Date.now(),
             });
-            createWorkerSessionPlacementGate(placements).updateAckCursors({
+            await createWorkerSessionPlacementGate(placements).updateAckCursors({
               claim: request.turnClaim,
               transcriptSeq: 2,
               liveSeq: 1,

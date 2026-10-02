@@ -42,6 +42,7 @@ import type { MatrixDecryptBridge } from "./decrypt-bridge.js";
 import { matrixEventToRaw } from "./event-helpers.js";
 import { MatrixAuthedHttpClient } from "./http-client.js";
 import { MATRIX_IDB_PERSIST_INTERVAL_MS } from "./idb-persistence-lock.js";
+import { withMatrixLiveEncryptedRoom } from "./live-room-readiness.js";
 import { LogService, noop } from "./logger.js";
 import { MatrixMessageWireDispatchGuards } from "./message-wire-dispatch.js";
 import { MatrixRecoveryKeyStore } from "./recovery-key-store.js";
@@ -115,6 +116,8 @@ export abstract class MatrixClientBase {
   protected verificationSummaryListenerBound = false;
   protected currentSyncState: MatrixSyncState | null = null;
   protected currentSyncError: unknown = undefined;
+  protected currentSyncFromCache = false;
+  protected currentSyncRevision = 0;
   protected readonly transactionScopeHomeserver: string;
   protected readonly transactionScopeAccessTokenHash: string;
   protected transactionScopeDeviceId: string | null;
@@ -128,6 +131,7 @@ export abstract class MatrixClientBase {
   }>();
   private startupPromise: Promise<void> | null = null;
   private readonly cryptoInitializationGate = createMatrixCryptoInitializationGate();
+  private readonly liveRoomReadinessOperations = new Set<Promise<() => void>>();
   private sdkStopped = false;
   private stopDiscardPromise: Promise<void> | null = null;
   private idbPersistPromise: Promise<void> | null = null;
@@ -505,6 +509,38 @@ export abstract class MatrixClientBase {
     // startSyncSession, after sync has created real Room objects.
   }
 
+  abortPendingRequests(): void {
+    this.requestAbortController.abort(new Error("Matrix client generation is no longer active."));
+  }
+
+  async withLiveEncryptedRoom<T>(
+    roomId: string,
+    run: (assertCurrent: () => void) => Promise<T>,
+    opts: { abortSignal?: AbortSignal; assertCurrent?: () => void } = {},
+  ): Promise<T> {
+    return await withMatrixLiveEncryptedRoom(this, run, {
+      client: this.client,
+      emitter: this.emitter,
+      roomId,
+      generationSignal: this.requestAbortController.signal,
+      abortSignal: opts.abortSignal,
+      operations: this.liveRoomReadinessOperations,
+      initializeCrypto: () => this.withClientCryptoWork(() => this.prepareForOneOff()),
+      assertActive: () => {
+        this.assertClientActive();
+        opts.assertCurrent?.();
+        if (this.sdkStopped || this.syncQuiescePromise) {
+          throw new Error("Matrix client is stopping; acquire a new client before sending");
+        }
+      },
+      getSync: () => ({
+        state: this.currentSyncState,
+        fromCache: this.currentSyncFromCache,
+        revision: this.currentSyncRevision,
+      }),
+    });
+  }
+
   hasPersistedSyncState(): boolean {
     // Only trust restart replay when the previous process completed a final
     // sync-store persist. A stale cursor can make Matrix re-surface old events.
@@ -568,11 +604,12 @@ export abstract class MatrixClientBase {
         await this.quiesceSync().catch(noop);
         this.syncStore?.discardPendingSyncCursorPersistence();
       }
-      this.requestAbortController.abort(new Error("Matrix client generation is no longer active."));
+      this.abortPendingRequests();
       // A one-off read can still be preparing crypto when its owner closes.
       // Join that initialization before stopping the backend it may publish.
       await this.startupPromise?.catch(noop);
       await this.cryptoInitializationGate.pending?.catch(noop);
+      await Promise.allSettled(this.liveRoomReadinessOperations);
       clearInterval(this.idbPersistTimer ?? undefined);
       this.idbPersistTimer = null;
       this.idbPersistAbortController?.abort();

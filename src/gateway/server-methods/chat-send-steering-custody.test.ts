@@ -38,7 +38,8 @@ import {
 import type { GatewayOperatorRoleDefinition } from "../../config/types.gateway.js";
 import { rotateAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
 import type { UserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
-import { ensureProfileForEmail, linkEmail, setUserProfileRole } from "../../state/user-profiles.js";
+import { linkEmail, setUserProfileRole } from "../../state/user-profile-writes.worker.js";
+import { ensureGatewayOwnerProfile, ensureProfileForEmail } from "../../state/user-profiles.js";
 import { captureGatewayOperatorRunAuthority } from "../operator-run-authority.js";
 import { handleGatewayRequest } from "../server-methods.js";
 import {
@@ -56,12 +57,35 @@ installGatewayTestHooks();
 registerAgentSessionLoopTestLifecycle();
 const createBrowserFollowupFixture = useBrowserFollowupFixture();
 
+function holdAssistantResponse(text: string) {
+  const response = createAssistantMessageEventStream();
+  let released = false;
+  return {
+    response,
+    isReleased: () => released,
+    release: () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      response.push({
+        type: "done",
+        reason: "stop",
+        message: createAssistant(testModel, [{ type: "text", text }]),
+      });
+      response.end();
+    },
+  };
+}
+
 describe("steering input custody", () => {
   it.each([
+    "shared-secret owner",
     "same grant",
     "changed grant",
     "revoked grant",
     "same permissions across profiles",
+    "no native admission across profiles",
     "different scopes across profiles",
     "same role permissions across profiles",
     "different role session caps across profiles",
@@ -71,7 +95,10 @@ describe("steering input custody", () => {
     "preserves authenticated chat.send steering authority across callers (%s)",
     async (scenario) => {
       const startOwnerTurn = scenario === "same permissions across profiles";
-      const profile = ensureProfileForEmail("reconnect-steering@example.test");
+      const sharedSecretOwner = scenario === "shared-secret owner";
+      const profile = sharedSecretOwner
+        ? ensureGatewayOwnerProfile("Gateway Owner")
+        : ensureProfileForEmail("reconnect-steering@example.test");
       const acrossProfiles = scenario.endsWith("across profiles");
       const withRoles = scenario.includes("role");
       const incomingProfile = acrossProfiles
@@ -130,15 +157,17 @@ describe("steering input custody", () => {
         setUserProfileRole(incomingProfile.id, "participant");
       }
       const accepted =
+        sharedSecretOwner ||
         scenario === "same grant" ||
         scenario === "same permissions across profiles" ||
         scenario === "same role permissions across profiles";
-      const queued = scenario === "changed grant" || scenario.startsWith("different");
+      const queued = !accepted && scenario !== "revoked grant";
       const originalGrant = new AbortController();
       const incomingGrant = new AbortController();
       const client = (connId: string, controller: AbortController, grantId: string) => ({
         ...createOperatorWsClient({ connId, scopes: fixture.client.connect.scopes }),
-        authenticatedUserId: "reconnect-steering@example.test",
+        usesSharedGatewayAuth: sharedSecretOwner,
+        authenticatedUserId: sharedSecretOwner ? undefined : "reconnect-steering@example.test",
         authenticatedUserProfile: {
           profileId: profile.id,
           displayName: null,
@@ -147,13 +176,15 @@ describe("steering input custody", () => {
           updatedAt: profile.updatedAt,
         },
         connect: { ...fixture.client.connect, caps: ["ui-commands"] },
-        internal: {
-          operatorAccessAuthority: {
-            gatewayAccessGrant: { pluginId: "test-access-policy", grantId },
-            signal: controller.signal,
-            assertCurrent: () => controller.signal.throwIfAborted(),
-          },
-        },
+        internal: sharedSecretOwner
+          ? { authenticatedOperator: true as const, operatorRoleActor: { kind: "system" as const } }
+          : {
+              operatorAccessAuthority: {
+                gatewayAccessGrant: { pluginId: "test-access-policy", grantId },
+                signal: controller.signal,
+                assertCurrent: () => controller.signal.throwIfAborted(),
+              },
+            },
       });
       const originalClient = client("original-browser", originalGrant, "original-grant");
       const reconnectedClient = client(
@@ -161,6 +192,12 @@ describe("steering input custody", () => {
         incomingGrant,
         scenario === "changed grant" ? "replacement-grant" : "original-grant",
       );
+      if (sharedSecretOwner) {
+        prepareGatewayConnectOperatorAccess(originalClient);
+        prepareGatewayConnectOperatorAccess(reconnectedClient);
+        expect(originalClient.internal.operatorAccessAuthority).toBeUndefined();
+        expect(reconnectedClient.internal.operatorAccessAuthority).toBeUndefined();
+      }
       if (acrossProfiles) {
         reconnectedClient.authenticatedUserId = "other-steering@example.test";
         reconnectedClient.authenticatedUserProfile = {
@@ -256,6 +293,26 @@ describe("steering input custody", () => {
         };
         operation.bindToolAuthoritySnapshot(prepareReplyToolAuthority(run));
         const fingerprint = operation.bindToolAuthorityRoute(run.run);
+        if (sharedSecretOwner) {
+          const incoming = await captureGatewayOperatorRunAuthority({
+            client: reconnectedClient,
+            context: fixture.context,
+          });
+          if (!incoming) {
+            throw new Error("Expected authenticated owner authority");
+          }
+          try {
+            expect(incoming.authority.source).not.toBe(captured.authority.source);
+            expect(
+              prepareReplyToolAuthority({
+                ...run,
+                operatorAuthority: incoming.authority,
+              }).fingerprint(run.run),
+            ).toBe(fingerprint);
+          } finally {
+            incoming.release();
+          }
+        }
         operation.setPhase("running");
         const sessionManager = SessionManager.open(
           fixture.scope,
@@ -264,29 +321,18 @@ describe("steering input custody", () => {
         guardSessionManager(sessionManager, { ...fixture.scope, runId: "original-backing-run" });
         const { session } = await createTestSession({ sessionManager });
         const providerStarted = createDeferred();
-        const response = createAssistantMessageEventStream();
+        const provider = holdAssistantResponse("Original work");
         streamMocks.streamSimple
           .mockImplementationOnce(() => {
             providerStarted.resolve();
-            return response;
+            return provider.response;
           })
           .mockImplementation((model) =>
             createAssistantResultStream(
               createAssistant(model, [{ type: "text", text: "Steering consumed" }]),
             ),
           );
-        let released = false;
-        releaseProvider = () => {
-          if (!released) {
-            released = true;
-            response.push({
-              type: "done",
-              reason: "stop",
-              message: createAssistant(testModel, [{ type: "text", text: "Original work" }]),
-            });
-            response.end();
-          }
-        };
+        releaseProvider = provider.release;
         cleanupOwnerContext = installRuntimeContextMessageForPrompt({
           session,
           message: buildRuntimeContextCustomMessage(ownerContext?.text, ownerContext?.fragments),
@@ -325,6 +371,8 @@ describe("steering input custody", () => {
           kind: "embedded",
           runId: "original-backing-run",
           toolAuthorityFingerprint: fingerprint,
+          supportsCrossProfileSteering:
+            scenario !== "same grant" && scenario !== "no native admission across profiles",
           cancel: vi.fn(),
           messageInjectionV2: { version: 2, isAvailable: () => true, queueMessage },
         });
@@ -415,6 +463,7 @@ describe("steering input custody", () => {
           expect(session.getSteeringMessages()).toEqual([]);
           expect(queueMessage).not.toHaveBeenCalled();
           if (queued) {
+            expect(operation.personalToolParticipants?.resolve()?.profileId).toBe(profile.id);
             expect(dispatchInboundMessageMock).toHaveBeenCalledOnce();
             expect(dispatchInboundMessageMock.mock.calls[0]?.[0]).toMatchObject({
               replyOptions: { messageInjectionDisposition: "rejected" },
@@ -570,48 +619,20 @@ describe("steering input custody", () => {
             terminals.push(event);
           }
         });
-        const firstResponse = createAssistantMessageEventStream();
-        const secondResponse = createAssistantMessageEventStream();
+        const backingProvider = holdAssistantResponse("backing answer");
+        const steeringProvider = holdAssistantResponse("accepted steering completed");
         streamMocks.streamSimple
-          .mockImplementationOnce(() => firstResponse)
+          .mockImplementationOnce(() => backingProvider.response)
           .mockImplementation((model) =>
             inputState === "native committed"
-              ? secondResponse
+              ? steeringProvider.response
               : createAssistantResultStream(
                   createAssistant(model, [{ type: "text", text: "accepted steering completed" }]),
                 ),
           );
-        let released = false;
-        const finishProvider = () => {
-          if (released) {
-            return;
-          }
-          released = true;
-          firstResponse.push({
-            type: "done",
-            reason: "stop",
-            message: createAssistant(testModel, [{ type: "text", text: "backing answer" }]),
-          });
-          firstResponse.end();
-        };
-        let secondReleased = false;
-        const finishSteeringProvider = () => {
-          if (secondReleased) {
-            return;
-          }
-          secondReleased = true;
-          secondResponse.push({
-            type: "done",
-            reason: "stop",
-            message: createAssistant(testModel, [
-              { type: "text", text: "accepted steering completed" },
-            ]),
-          });
-          secondResponse.end();
-        };
         releaseProviders = () => {
-          finishProvider();
-          finishSteeringProvider();
+          backingProvider.release();
+          steeringProvider.release();
         };
         backingRun = session.prompt("Continue the original backing work.");
         const cancel = vi.fn();
@@ -664,15 +685,21 @@ describe("steering input custody", () => {
           ),
         ).toHaveLength(inputState === "internal fresh" ? 0 : 1);
         fixture.beforeApprove.mockClear();
-        if (sharedProfileCustody || inputState === "native custody") {
+        if (
+          sharedProfileCustody ||
+          inputState === "native custody" ||
+          inputState === "browser custody lifecycle"
+        ) {
           expect(session.getSteeringMessages()).toEqual([fixture.params.message]);
           expect(session.isStreaming).toBe(true);
-          expect(released).toBe(false);
+          expect(backingProvider.isReleased()).toBe(false);
           expect(pending.items[0]).toMatchObject({
             runId: fixture.params.idempotencyKey,
             state: "queued",
             message: { idempotencyKey: inputKey, content: fixture.params.message },
           });
+        }
+        if (sharedProfileCustody || inputState === "native custody") {
           linkEmail(email, target.id);
           if (inputState === "browser custody session ACL") {
             const visibility = {
@@ -703,17 +730,9 @@ describe("steering input custody", () => {
               createdActor: { type: "human", source: "profile", id: creator!.id },
             });
             expect(operation.result).toBeNull();
-            expect(released).toBe(false);
+            expect(backingProvider.isReleased()).toBe(false);
           }
         } else if (inputState === "browser custody lifecycle") {
-          expect(session.getSteeringMessages()).toEqual([fixture.params.message]);
-          expect(session.isStreaming).toBe(true);
-          expect(released).toBe(false);
-          expect(pending.items[0]).toMatchObject({
-            runId: fixture.params.idempotencyKey,
-            state: "queued",
-            message: { idempotencyKey: inputKey, content: fixture.params.message },
-          });
           expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
           rotateAgentEventLifecycleGeneration();
           expect(cancel).toHaveBeenCalledExactlyOnceWith("restart");
@@ -724,7 +743,7 @@ describe("steering input custody", () => {
         } else if (inputState === "internal fresh") {
           fixture.beforeApprove.mockImplementation(() => linkEmail(email, target.id));
         }
-        finishProvider();
+        backingProvider.release();
         if (inputState === "native committed") {
           await vi.waitFor(() => expect(initialRuntimeReceipt).toBeDefined());
           // Source finalization confirms steering metadata after the runtime commit.
@@ -748,7 +767,7 @@ describe("steering input custody", () => {
           expect(recorder.getAdmissionReceipt()).toEqual(finalReceipt);
           expect(loadTranscriptEventsSync(fixture.scope)).toEqual(committedTranscript);
           expect(fixture.beforeApprove).not.toHaveBeenCalled();
-          finishSteeringProvider();
+          steeringProvider.release();
         }
         await backingRun;
         await fixture.finishDispatch();

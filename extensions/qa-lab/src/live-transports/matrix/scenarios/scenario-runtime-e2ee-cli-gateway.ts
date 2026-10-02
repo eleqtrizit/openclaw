@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { createMatrixQaClient } from "../substrate/client.js";
-import { createMatrixQaE2eeScenarioClient } from "../substrate/e2ee-client.js";
 import { buildMatrixQaE2eeScenarioRoomKey } from "./scenario-contract.js";
 import {
   patchMatrixQaGatewayMatrixAccount,
@@ -25,8 +24,8 @@ import {
 } from "./scenario-runtime-e2ee-cli-shared.js";
 import { buildMatrixE2eeReplyArtifact } from "./scenario-runtime-e2ee-room.js";
 import {
+  createMatrixQaE2eeAccountClient,
   ensureMatrixQaE2eeOwnDeviceVerified,
-  requireMatrixQaE2eeOutputDir,
   requireMatrixQaGatewayConfigPath,
 } from "./scenario-runtime-e2ee-shared.js";
 import {
@@ -288,16 +287,12 @@ export async function runMatrixQaE2eeCliSetupThenGatewayReplyScenario(
     // SAFETY: the shared CLI JSON helper returns the verification-status payload for this command.
     const handoffStatus = handoffPayload as MatrixQaCliVerificationStatus;
     assertMatrixQaCliE2eeStatus("Matrix CLI verification during Gateway ownership", handoffStatus);
-    const driverClient = await createMatrixQaE2eeScenarioClient({
+    const driverClient = await createMatrixQaE2eeAccountClient(context, {
       accessToken: driverAccount.accessToken,
       actorId: `driver-cli-setup-gateway-${randomUUID().slice(0, 8)}`,
-      baseUrl: context.baseUrl,
       deviceId: driverAccount.deviceId,
-      observedEvents: context.observedEvents,
-      outputDir: requireMatrixQaE2eeOutputDir(context),
       password: driverAccount.password,
       scenarioId,
-      timeoutMs: context.timeoutMs,
       userId: driverAccount.userId,
     });
     const replied = await (async () => {
