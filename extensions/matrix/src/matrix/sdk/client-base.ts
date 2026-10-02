@@ -18,9 +18,8 @@ import { createMatrixJsSdkClientLogger } from "../client/logging.js";
 import type { MatrixSnapshotStateRuntime } from "../crypto-state-store.js";
 import { awaitMatrixStartupWithAbort, throwIfMatrixStartupAborted } from "../startup-abort.js";
 import type { MatrixSyncState } from "../sync-state.js";
+import { bootstrapMatrixClientCrypto } from "./client-crypto-bootstrap.js";
 import {
-  MATRIX_AUTOMATIC_REPAIR_BOOTSTRAP_OPTIONS,
-  MATRIX_INITIAL_CRYPTO_BOOTSTRAP_OPTIONS,
   resolveMatrixLocalTimeoutMs,
   type MatrixOwnDeviceInfo,
   type MatrixOwnDeviceVerificationStatus,
@@ -666,51 +665,12 @@ export abstract class MatrixClientBase {
     }
     throwIfMatrixStartupAborted(abortSignal);
     await this.ensureCryptoSupportInitialized();
-    const crypto = this.client.getCrypto() as MatrixCryptoBootstrapApi | undefined;
-    if (!crypto) {
-      return;
-    }
-    const cryptoBootstrapper = this.cryptoBootstrapper;
-    if (!cryptoBootstrapper) {
-      return;
-    }
-    const initial = await cryptoBootstrapper.bootstrap(
-      crypto,
-      MATRIX_INITIAL_CRYPTO_BOOTSTRAP_OPTIONS,
-    );
-    throwIfMatrixStartupAborted(abortSignal);
-    if (!initial.crossSigningPublished || initial.ownDeviceVerified === false) {
-      const status = await this.getOwnDeviceVerificationStatus();
-      if (status.signedByOwner) {
-        LogService.warn(
-          "MatrixClientLite",
-          "Cross-signing/bootstrap is incomplete for an already owner-signed device; skipping automatic reset and preserving the current identity. Restore the recovery key or run an explicit verification bootstrap if repair is needed.",
-        );
-      } else {
-        // Forced reset validates the active SSSS recovery key before rotating local keys.
-        // Missing or stale recovery material fails without mutating crypto state.
-        try {
-          const repaired = await cryptoBootstrapper.bootstrap(
-            crypto,
-            MATRIX_AUTOMATIC_REPAIR_BOOTSTRAP_OPTIONS,
-          );
-          throwIfMatrixStartupAborted(abortSignal);
-          if (repaired.crossSigningPublished && repaired.ownDeviceVerified !== false) {
-            LogService.info(
-              "MatrixClientLite",
-              "Cross-signing/bootstrap recovered after forced reset",
-            );
-          }
-        } catch (err) {
-          LogService.warn(
-            "MatrixClientLite",
-            "Failed to recover cross-signing/bootstrap with forced reset:",
-            err,
-          );
-        }
-      }
-    }
-    this.cryptoBootstrapped = true;
+    this.cryptoBootstrapped = await bootstrapMatrixClientCrypto({
+      crypto: this.client.getCrypto() as MatrixCryptoBootstrapApi | undefined,
+      bootstrapper: this.cryptoBootstrapper,
+      getOwnDeviceVerificationStatus: () => this.getOwnDeviceVerificationStatus(),
+      abortSignal,
+    });
   }
 
   protected async initializeCryptoIfNeeded(abortSignal?: AbortSignal): Promise<void> {
