@@ -23,6 +23,7 @@ import {
   type MatrixIdbSnapshotRecord,
 } from "../crypto-state-store.js";
 import { acquireMatrixCryptoStoreOwnership } from "./crypto-store-ownership.js";
+import { observeCryptoStoreWaiter } from "./crypto-store-ownership.test-helpers.js";
 import { persistIdbToDisk, restoreIdbFromDisk } from "./idb-persistence.js";
 import {
   clearAllIndexedDbState,
@@ -65,20 +66,16 @@ describe("Matrix IndexedDB persistence", () => {
   it("holds exclusive crypto-store ownership until release", async () => {
     const snapshotPath = path.join(tmpDir, "crypto-idb-snapshot.json");
     const first = await acquireMatrixCryptoStoreOwnership(snapshotPath);
-    const abort = new AbortController();
-    const waiting = acquireMatrixCryptoStoreOwnership(snapshotPath, { signal: abort.signal });
-    let acquired = false;
-    void waiting.then(() => {
-      acquired = true;
-    });
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 300);
-    });
-    expect(acquired).toBe(false);
-    await first.release();
-    const replacement = await waiting;
-    expect(acquired).toBe(true);
-    await replacement.release();
+    const waiter = await observeCryptoStoreWaiter(snapshotPath);
+    const waiting = acquireMatrixCryptoStoreOwnership(snapshotPath);
+    try {
+      await waiter.waitFor(waiting);
+      await first.release();
+      const replacement = await waiting;
+      await replacement.release();
+    } finally {
+      waiter.close();
+    }
   });
 
   it("refuses a successor after a failed final state publication", async () => {
@@ -94,19 +91,16 @@ describe("Matrix IndexedDB persistence", () => {
   it("refuses a waiting successor when the departing owner poisons before unlock", async () => {
     const snapshotPath = path.join(tmpDir, "crypto-idb-snapshot.json");
     const owner = await acquireMatrixCryptoStoreOwnership(snapshotPath);
+    const waiter = await observeCryptoStoreWaiter(snapshotPath);
     const successor = acquireMatrixCryptoStoreOwnership(snapshotPath);
-    for (let attempt = 0; attempt < 20; attempt++) {
-      if ((await fs.promises.readdir(`${snapshotPath}.owner.waiters`).catch(() => [])).length > 0) {
-        break;
-      }
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 50);
-      });
+    try {
+      await waiter.waitFor(successor);
+      await owner.armUnsafeState();
+      await owner.release();
+      await expect(successor).rejects.toThrow("unresolved unsafe final state");
+    } finally {
+      waiter.close();
     }
-    expect((await fs.promises.readdir(`${snapshotPath}.owner.waiters`)).length).toBeGreaterThan(0);
-    await owner.armUnsafeState();
-    await owner.release();
-    await expect(successor).rejects.toThrow("unresolved unsafe final state");
   });
 
   it("persists and restores database contents for the selected prefix", async () => {

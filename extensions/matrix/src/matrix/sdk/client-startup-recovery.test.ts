@@ -6,6 +6,7 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MatrixClient } from "../sdk.js";
+import { observeCryptoStoreWaiter } from "./crypto-store-ownership.test-helpers.js";
 import { persistIdbToDisk, restoreIdbFromDisk } from "./idb-persistence.js";
 
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => afterEach(cleanup));
@@ -179,20 +180,16 @@ describe("Matrix encrypted startup ownership", () => {
       abort.abort();
       finish.resolve();
       await expect(startup).rejects.toMatchObject({ name: "AbortError" });
+      const waiter = await observeCryptoStoreWaiter(snapshotPath);
       const replacementStartup = replacement.prepareForOneOff();
-      let ready = false;
-      void replacementStartup.then(
-        () => {
-          ready = true;
-        },
-        () => undefined,
-      );
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 300);
-      });
-      expect(ready).toBe(false);
-      await owner.stopWithoutPersist();
-      await expect(replacementStartup).rejects.toThrow("unresolved unsafe final state");
+      try {
+        await waiter.waitFor(replacementStartup);
+        expect(fixture.init).toHaveBeenCalledTimes(1);
+        await owner.stopWithoutPersist();
+        await expect(replacementStartup).rejects.toThrow("unresolved unsafe final state");
+      } finally {
+        waiter.close();
+      }
     } finally {
       finish.resolve();
       await startup.catch(() => undefined);
@@ -217,11 +214,15 @@ describe("Matrix encrypted startup ownership", () => {
     try {
       await owner.prepareForOneOff();
       const savedBefore = vi.mocked(persistIdbToDisk).mock.calls.length;
+      const waiter = await observeCryptoStoreWaiter(snapshotPath);
       const replacementStartup = replacement.start({ abortSignal: abort.signal });
       const rejected = expect(replacementStartup).rejects.toMatchObject({ name: "AbortError" });
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 300);
-      });
+      try {
+        await waiter.waitFor(replacementStartup);
+      } finally {
+        waiter.close();
+      }
+      expect(fixture.init).toHaveBeenCalledTimes(1);
       abort.abort();
       await rejected;
       await replacement.stopAndPersist();
