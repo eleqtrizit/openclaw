@@ -485,8 +485,20 @@ export function resolveGatewayScopedTools(
   const mediatedToolFamilies = new Set(Array.from(mediatedToolNames, resolveCoreToolFactoryFamily));
   const includeMediatedBaseCodingTools = mediatedToolFamilies.has("base-coding");
   const includeMediatedShellTools = mediatedToolFamilies.has("shell");
+  const wantsMediatedCodingTools =
+    surface === "loopback" && (includeMediatedBaseCodingTools || includeMediatedShellTools);
+  // A sandboxed session must run these tools against its prepared sandbox
+  // filesystem. Only rooted executions carry one; without it the coding tools
+  // fall back to host paths, so refuse to build them rather than escape the sandbox.
+  const mediatedCodingToolsLackSandbox =
+    wantsMediatedCodingTools && sandboxed && !params.rootedExecution?.sandbox;
+  if (mediatedCodingToolsLackSandbox) {
+    logWarn(
+      `mediated coding tools withheld for sandboxed session ${params.sessionKey}: no prepared sandbox context is available for this run`,
+    );
+  }
   const mediatedCodingTools =
-    surface === "loopback" && (includeMediatedBaseCodingTools || includeMediatedShellTools)
+    wantsMediatedCodingTools && !mediatedCodingToolsLackSandbox
       ? createOpenClawCodingTools({
           config: params.cfg,
           sessionConfigSource: "runtime",

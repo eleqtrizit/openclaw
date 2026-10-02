@@ -176,6 +176,61 @@ describe("resolveGatewayScopedTools", () => {
     );
   });
 
+  it.each(["all", "non-main"] as const)(
+    "withholds mediated coding tools from a sandbox.mode=%s session that has no prepared sandbox",
+    async (mode) => {
+      const base = tempDirs.make("openclaw-mediated-sandbox-");
+      const workspaceDir = path.join(base, "ws");
+      await fs.mkdir(workspaceDir, { recursive: true });
+      const outsidePath = path.join(base, "outside.txt");
+      await fs.writeFile(outsidePath, "outside-sentinel");
+      const result = resolveTools({
+        cfg: {
+          agents: { defaults: { sandbox: { mode } } },
+        },
+        sessionKey: "agent:main:cron:mediated-sandbox",
+        workspaceDir,
+        mediatedToolNames: ["read", "write", "edit", "ls", "apply_patch", "exec", "process"],
+        excludeToolNames: [],
+      });
+      const names = result.tools.map((tool) => tool.name);
+      for (const name of ["read", "write", "edit", "ls", "apply_patch", "exec", "process"]) {
+        expect(names).not.toContain(name);
+      }
+      await expect(fs.stat(path.join(base, "escape.txt"))).rejects.toThrow();
+    },
+  );
+
+  it("keeps mediated coding tools for a session that is not sandboxed", () => {
+    const workspaceDir = tempDirs.make("openclaw-mediated-unsandboxed-");
+    const result = resolveTools({
+      cfg: { agents: { defaults: { sandbox: { mode: "off" } } } },
+      sessionKey: "agent:main:cron:mediated-unsandboxed",
+      workspaceDir,
+      mediatedToolNames: ["read", "write"],
+      excludeToolNames: ["edit", "apply_patch", "exec", "process"],
+    });
+    const names = result.tools.map((tool) => tool.name);
+    expect(names).toContain("read");
+    expect(names).toContain("write");
+  });
+
+  it("does not expose host file tools through a sandboxed restricted MCP grant", async () => {
+    const workspaceDir = tempDirs.make("openclaw-mcp-sandbox-");
+    const { tools } = await resolveMcpLoopbackScopedTools({
+      cfg: { agents: { defaults: { sandbox: { mode: "all" } } } },
+      context: {
+        sessionKey: "agent:main:cron:mcp-sandbox",
+        senderIsOwner: true,
+        workspaceDir,
+        toolsAllow: ["read", "write"],
+      },
+    });
+    const names = tools.map((tool) => (tool as { name?: string }).name);
+    expect(names).not.toContain("read");
+    expect(names).not.toContain("write");
+  });
+
   it("applies sandbox tool denies to sandboxed loopback turns", () => {
     const result = resolveTools({
       cfg: {
