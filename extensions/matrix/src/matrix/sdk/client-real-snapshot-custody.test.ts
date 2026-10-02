@@ -99,19 +99,35 @@ describe("Matrix client custody at the real SQLite snapshot boundary", () => {
     const beforeContender = snapshotOpens;
     const contender = makeClient();
     const abort = new AbortController();
+    const waiterDir = `${snapshotPath}.owner.waiters`;
+    await fs.mkdir(waiterDir, { recursive: true });
+    const watchAbort = new AbortController();
+    const waiterObserved = (async () => {
+      for await (const event of fs.watch(waiterDir, { signal: watchAbort.signal })) {
+        if ((await fs.readdir(waiterDir)).length > 0) {
+          expect(event.eventType).toBeDefined();
+          return;
+        }
+      }
+      throw new Error("Waiter watcher ended before the contender registered");
+    })();
     const waiting = contender.start({ abortSignal: abort.signal });
     const waitingRejection = expect(waiting).rejects.toMatchObject({ name: "AbortError" });
-    let waiterCount = 0;
-    for (let attempt = 0; attempt < 20; attempt++) {
-      waiterCount = (await fs.readdir(`${snapshotPath}.owner.waiters`).catch(() => [])).length;
-      if (waiterCount > 0) {
-        break;
-      }
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 50);
-      });
+    try {
+      await Promise.race([
+        waiterObserved,
+        waiting.then(
+          () => {
+            throw new Error("Contender started before registering a waiter");
+          },
+          (error: unknown) => {
+            throw error;
+          },
+        ),
+      ]);
+    } finally {
+      watchAbort.abort();
     }
-    expect(waiterCount).toBeGreaterThan(0);
     expect(snapshotOpens).toBe(beforeContender);
     expect(sdk.init).toHaveBeenCalledTimes(1);
     abort.abort();
