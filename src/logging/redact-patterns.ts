@@ -84,7 +84,7 @@ const AMBIGUOUS_QUOTED_SECRET_FIELD_REDACT_PATTERN = String.raw`(^|[\s,{])["']?(
 const AMBIGUOUS_QUOTED_AUTH_FIELD_REDACT_PATTERN = String.raw`(^|[\s,{])["']?(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)["']?\s*[:=]\s*(["'])([^"'\r\n]+)\2`;
 // Pure-base64 prefixes require a non-alphanumeric boundary and skip explicit data-URL payloads.
 // Match the token first: the lookbehind rescans the whole base64 run, quadratic per `+`/`/`/`=`.
-export const BASE64_SAFE_TOKEN_BOUNDARY = String.raw`(^|[^A-Za-z0-9])`;
+const BASE64_SAFE_TOKEN_BOUNDARY = String.raw`(^|[^A-Za-z0-9])`;
 export const base64SafeToken = (token: string) =>
   String.raw`${BASE64_SAFE_TOKEN_BOUNDARY}(?=${token})(?<!;base64,[A-Za-z0-9+/=]*)(${token})`;
 export const IDENTIFIER_SAFE_TOKEN_BOUNDARY = String.raw`(^|[^A-Za-z0-9_])`;
