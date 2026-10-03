@@ -752,6 +752,21 @@ describe("redactSensitiveText", () => {
     );
   });
 
+  it("keeps long URL credentials reachable through the default prefilter", () => {
+    const longPassword = "a".repeat(600);
+    const longUsername = "u".repeat(600);
+    for (const input of [
+      `https://u:${longPassword}@example.test`,
+      `https://${longUsername}:opaque-password-value-123@example.test`,
+      `postgres://u:${longPassword}@example.test/db`,
+    ]) {
+      const output = redactSensitiveText(input);
+      expect(output).not.toBe(input);
+      expect(output).not.toContain(longPassword);
+      expect(output).not.toContain("opaque-password-value-123");
+    }
+  });
+
   it("masks sensitive form-urlencoded body fields by exact key", () => {
     const input =
       "code=oauth-code-123&hook_token=hook-token-123&jwt=jwt-secret-123&pass=form-pass-123&client_secret=oauth-client-secret-1234567890&refresh_token=refresh-token-1234567890&token_count=42&session_id=session-visible";
@@ -961,6 +976,18 @@ describe("redactSensitiveText", () => {
         mode: "tools",
       }),
     ).toBe("body: client_se\u3164cret\u3164=***&safe=1");
+  });
+
+  it("keeps arbitrarily padded sensitive keys reachable through the default prefilter", () => {
+    for (const key of [
+      `p\u200Bassword${"\u200B".repeat(600)}`,
+      `p%61ssword${"\u200B".repeat(600)}`,
+      `p+assword${"\u200B".repeat(600)}`,
+    ]) {
+      const input = `${key}=opaque-value-123`;
+      const output = redactSensitiveText(input, { mode: "tools" });
+      expect(output).not.toContain("opaque-value-123");
+    }
   });
 
   it("redacts raw secret values that contain an ellipsis", () => {
