@@ -415,46 +415,6 @@ async function prepareCliRunContextWithinReadFence(
       skillsSnapshot: params.skillsSnapshot,
     });
   }
-  // An ordinary sandboxed run that is served mediated coding tools over the MCP
-  // loopback must bind them to its real sandbox, not the Gateway host filesystem.
-  // Rooted executions prepare their own sandbox above.
-  let sandboxExecution: PreparedSandboxExecutionCapability | undefined;
-  if (
-    !rootedExecution &&
-    !nodeClaudePlacement &&
-    !skipsTurnPreparation &&
-    params.disableTools !== true &&
-    backendResolved.bundleMcp &&
-    // Prepare a sandbox only when the run is served mediated coding tools: a
-    // completion handoff, or a cap that selects at least one coding tool.
-    (params.trustedInternalHandoff !== undefined ||
-      (runtimeToolsAllowPolicy !== undefined &&
-        selectsMediatedCodingTools(runtimeToolsAllowPolicy))) &&
-    resolveSandboxRuntimeStatus({
-      cfg: runConfig,
-      sessionKey: policySessionKey,
-      agentId: policyAgentId,
-    }).sandboxed
-  ) {
-    const admittedParams = await admitCliRunParams(params, workspaceResolution.agentId);
-    params = admittedParams;
-    params.abortSignal?.throwIfAborted();
-    sandboxExecution = await prepareSandboxExecutionCapability({
-      workspaceDir,
-      config: params.config,
-      agentId: workspaceResolution.agentId,
-      sessionId: params.sessionId,
-      sessionKey: params.sessionKey,
-      sandboxSessionKey: policySessionKey,
-      sandboxAgentId: policyAgentId,
-      execOverrides: params.execOverrides,
-      permissionMode: params.sessionEntry?.permissionMode,
-      skillsSnapshot: params.skillsSnapshot,
-      abortSignal: params.abortSignal,
-      admittedRunContext: admittedParams.admittedRunContext,
-    });
-    params.assertCurrent?.();
-  }
   params.assertCurrent?.();
   params.abortSignal?.throwIfAborted();
   if (nodeClaudePlacement && params.cliToolAvailability) {
@@ -931,6 +891,51 @@ async function prepareCliRunContextWithinReadFence(
     rooted: Boolean(rootedExecution),
     skipPreparation: skipsTurnPreparation,
   });
+  // An ordinary sandboxed run that is served mediated coding tools over the MCP
+  // loopback must bind them to its real sandbox, not the Gateway host filesystem.
+  // Rooted executions prepare their own sandbox above. Provisioning follows the
+  // same effective selection the MCP projection uses: a completion handoff, a
+  // runtime or explicit cap that names a coding tool, or the backend's default
+  // host-owned coding tools. Tool-free and non-coding runs never touch the backend.
+  let sandboxExecution: PreparedSandboxExecutionCapability | undefined;
+  const selectedCodingTools = [
+    ...(runtimeToolsAllowPolicy ?? []),
+    ...(params.cliToolAvailability?.openClaw ?? []),
+    ...(hostOwnedTools ?? []),
+  ];
+  if (
+    !rootedExecution &&
+    !nodeClaudePlacement &&
+    !skipsTurnPreparation &&
+    params.disableTools !== true &&
+    backendResolved.bundleMcp &&
+    (params.trustedInternalHandoff !== undefined ||
+      (selectedCodingTools.length > 0 && selectsMediatedCodingTools(selectedCodingTools))) &&
+    resolveSandboxRuntimeStatus({
+      cfg: runConfig,
+      sessionKey: policySessionKey,
+      agentId: policyAgentId,
+    }).sandboxed
+  ) {
+    const admittedParams = await admitCliRunParams(params, workspaceResolution.agentId);
+    params = admittedParams;
+    params.abortSignal?.throwIfAborted();
+    sandboxExecution = await prepareSandboxExecutionCapability({
+      workspaceDir,
+      config: params.config,
+      agentId: workspaceResolution.agentId,
+      sessionId: params.sessionId,
+      sessionKey: params.sessionKey,
+      sandboxSessionKey: policySessionKey,
+      sandboxAgentId: policyAgentId,
+      execOverrides: params.execOverrides,
+      permissionMode: params.sessionEntry?.permissionMode,
+      skillsSnapshot: params.skillsSnapshot,
+      abortSignal: params.abortSignal,
+      admittedRunContext: admittedParams.admittedRunContext,
+    });
+    params.assertCurrent?.();
+  }
   const shouldMaterializeRuntimePolicy =
     runtimeToolsAllowPolicy !== undefined &&
     !nodeClaudePlacement &&
