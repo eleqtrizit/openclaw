@@ -23,7 +23,10 @@ import {
   resolveSwarmCollectorToolContext,
 } from "../agents/openclaw-tools.swarm.js";
 import { resolveRequesterToolPolicies } from "../agents/requester-tool-policy.js";
-import type { PreparedRootedExecutionCapability } from "../agents/rooted-run-params.js";
+import type {
+  PreparedRootedExecutionCapability,
+  PreparedSandboxExecutionCapability,
+} from "../agents/rooted-run-params.js";
 import { resolveSandboxRuntimeStatus } from "../agents/sandbox/runtime-status.js";
 import { createScheduledMessageInvocationAdmission } from "../agents/scheduled-message-invocation.js";
 import { resolveScheduledToolCallerContext } from "../agents/scheduled-tool-policy.js";
@@ -84,6 +87,8 @@ export function resolveGatewayScopedTools(
   > & {
     cfg: OpenClawConfig;
     rootedExecution?: PreparedRootedExecutionCapability;
+    /** Host-prepared sandbox for the mediated coding tools of an ordinary sandboxed run. */
+    sandboxExecution?: PreparedSandboxExecutionCapability;
     messageActionTurnCapability?: string;
     authProfileStore?: AuthProfileStore;
     agentDir?: string;
@@ -488,10 +493,11 @@ export function resolveGatewayScopedTools(
   const wantsMediatedCodingTools =
     surface === "loopback" && (includeMediatedBaseCodingTools || includeMediatedShellTools);
   // A sandboxed session must run these tools against its prepared sandbox
-  // filesystem. Only rooted executions carry one; without it the coding tools
-  // fall back to host paths, so refuse to build them rather than escape the sandbox.
-  const mediatedCodingToolsLackSandbox =
-    wantsMediatedCodingTools && sandboxed && !params.rootedExecution?.sandbox;
+  // filesystem: either the rooted execution's, or the one the CLI runner prepared
+  // for an ordinary restricted run. Without either, the coding tools would fall
+  // back to host paths, so refuse to build them rather than escape the sandbox.
+  const mediatedSandbox = params.rootedExecution?.sandbox ?? params.sandboxExecution?.sandbox;
+  const mediatedCodingToolsLackSandbox = wantsMediatedCodingTools && sandboxed && !mediatedSandbox;
   if (mediatedCodingToolsLackSandbox) {
     logWarn(
       `mediated coding tools withheld for sandboxed session ${params.sessionKey}: no prepared sandbox context is available for this run`,
@@ -511,7 +517,7 @@ export function resolveGatewayScopedTools(
           workspaceDir,
           cwd: params.cwd?.trim() || workspaceDir,
           ...params.rootedExecution,
-          sandbox: params.rootedExecution?.sandbox ?? undefined,
+          sandbox: mediatedSandbox,
           modelProvider: params.modelProvider,
           modelId: params.modelId,
           modelHasVision: params.modelHasVision,

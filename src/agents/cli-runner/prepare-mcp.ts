@@ -17,6 +17,7 @@ export async function prepareCliMcpToolProjection(
       McpScope,
       | "cfg"
       | "rootedExecution"
+      | "sandboxExecution"
       | "skillLibraryAuthoring"
       | "authProfileStore"
       | "authProfileStoreAgentDir"

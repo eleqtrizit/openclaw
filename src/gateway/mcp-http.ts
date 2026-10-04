@@ -282,6 +282,7 @@ async function startMcpLoopbackServer(
               context: requestContext,
               admittedRunContext: boundClientGrant?.admittedRunContext,
               rootedExecution: boundClientGrant?.rootedExecution,
+              sandboxExecution: boundClientGrant?.sandboxExecution,
               messageActionTurnCapability: boundClientGrant?.messageActionTurnCapability,
               cfg,
               signal: requestAbort.signal,

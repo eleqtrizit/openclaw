@@ -16,7 +16,10 @@ import {
 } from "../agents/core-tool-factory-descriptors.js";
 import { applyEmbeddedAttemptToolsAllow } from "../agents/embedded-agent-runner/run/attempt-tool-construction-plan.js";
 import { loadNodeExecAvailability } from "../agents/node-exec-availability.js";
-import type { PreparedRootedExecutionCapability } from "../agents/rooted-run-params.js";
+import type {
+  PreparedRootedExecutionCapability,
+  PreparedSandboxExecutionCapability,
+} from "../agents/rooted-run-params.js";
 import { normalizeToolPolicyName } from "../agents/tool-policy.js";
 import { hasSessionControlAuthority } from "../agents/tools/sessions-control-authority.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -62,6 +65,7 @@ type McpLoopbackScopeParams = {
   authProfileStoreAgentDir?: string;
   skillLibraryAuthoring?: SkillLibraryAuthoringCapability;
   rootedExecution?: PreparedRootedExecutionCapability;
+  sandboxExecution?: PreparedSandboxExecutionCapability;
   messageActionTurnCapability?: string;
   grantToken?: string;
   /**
@@ -215,6 +219,7 @@ function resolveMcpLoopbackTools(
   const scoped = resolveGatewayScopedTools({
     ...context,
     rootedExecution: params.rootedExecution,
+    sandboxExecution: params.sandboxExecution,
     messageActionTurnCapability: params.messageActionTurnCapability,
     cfg: params.cfg,
     authProfileStore: params.authProfileStore,

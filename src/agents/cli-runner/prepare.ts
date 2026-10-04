@@ -112,7 +112,9 @@ import { recordAdmittedModelRoutingDecision } from "../model-routing-decision.js
 import { applyPluginTextReplacements } from "../plugin-text-transforms.js";
 import {
   prepareRootedExecutionCapability,
+  prepareSandboxExecutionCapability,
   type PreparedRootedExecutionCapability,
+  type PreparedSandboxExecutionCapability,
 } from "../rooted-run-params.js";
 import { collectRuntimeChannelCapabilities } from "../runtime-capabilities.js";
 import { resolveSandboxRuntimeStatus } from "../sandbox/runtime-status.js";
@@ -478,6 +480,43 @@ async function prepareCliRunContextWithinReadFence(
       permissionMode: params.sessionEntry?.permissionMode,
       skillsSnapshot: params.skillsSnapshot,
     });
+  }
+  // An ordinary sandboxed run that is served mediated coding tools over the MCP
+  // loopback must bind them to its real sandbox, not the Gateway host filesystem.
+  // Rooted executions prepare their own sandbox above.
+  let sandboxExecution: PreparedSandboxExecutionCapability | undefined;
+  if (
+    !rootedExecution &&
+    !nodeClaudePlacement &&
+    !skipsTurnPreparation &&
+    params.disableTools !== true &&
+    backendResolved.bundleMcp &&
+    // Only restricted runs and completion handoffs are served mediated coding tools.
+    (runtimeToolsAllowPolicy !== undefined || params.trustedInternalHandoff !== undefined) &&
+    resolveSandboxRuntimeStatus({
+      cfg: runConfig,
+      sessionKey: policySessionKey,
+      agentId: policyAgentId,
+    }).sandboxed
+  ) {
+    const admittedParams = await admitCliRunParams(params, workspaceResolution.agentId);
+    params = admittedParams;
+    params.abortSignal?.throwIfAborted();
+    sandboxExecution = await prepareSandboxExecutionCapability({
+      workspaceDir,
+      config: params.config,
+      agentId: workspaceResolution.agentId,
+      sessionId: params.sessionId,
+      sessionKey: params.sessionKey,
+      sandboxSessionKey: policySessionKey,
+      sandboxAgentId: policyAgentId,
+      execOverrides: params.execOverrides,
+      permissionMode: params.sessionEntry?.permissionMode,
+      skillsSnapshot: params.skillsSnapshot,
+      abortSignal: params.abortSignal,
+      admittedRunContext: admittedParams.admittedRunContext,
+    });
+    params.assertCurrent?.();
   }
   params.assertCurrent?.();
   params.abortSignal?.throwIfAborted();
@@ -1012,6 +1051,7 @@ async function prepareCliRunContextWithinReadFence(
           scope: {
             cfg: runConfig,
             rootedExecution,
+            sandboxExecution,
             ...(skillLibraryAuthoring ? { skillLibraryAuthoring } : {}),
             ...(mcpToolAuth ? { authProfileStore: mcpToolAuth.store } : {}),
             ...(mcpToolAuth?.agentDir ? { authProfileStoreAgentDir: mcpToolAuth.agentDir } : {}),
@@ -1163,6 +1203,7 @@ async function prepareCliRunContextWithinReadFence(
               bindQuestionAnswerAuthorityForSession(mcpGrant.context.sessionKey, assertActive),
             ...(skillLibraryAuthoring ? { skillLibraryAuthoring } : {}),
             rootedExecution,
+            ...(sandboxExecution ? { sandboxExecution } : {}),
             ...(mcpToolAuth ? { toolAuth: mcpToolAuth } : {}),
           })
         : undefined;

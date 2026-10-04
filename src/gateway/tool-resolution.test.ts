@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { createAgentToolsSandboxContext } from "../agents/test-helpers/agent-tools-sandbox-context.js";
+import { createHostSandboxFsBridge } from "../agents/test-helpers/host-sandbox-fs-bridge.js";
 import {
   McpLoopbackToolCache,
   resolveMcpLoopbackPolicyTools,
@@ -200,6 +202,71 @@ describe("resolveGatewayScopedTools", () => {
       await expect(fs.stat(path.join(base, "escape.txt"))).rejects.toThrow();
     },
   );
+
+  it("binds mediated file tools to the prepared sandbox bridge for a sandboxed session", async () => {
+    const base = tempDirs.make("openclaw-mediated-bound-sandbox-");
+    const workspaceDir = path.join(base, "ws");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    const outsidePath = path.join(base, "outside.txt");
+    await fs.writeFile(outsidePath, "outside-sentinel");
+    const bridge = createHostSandboxFsBridge(workspaceDir);
+    const writeFile = vi.spyOn(bridge, "writeFile");
+    const readFile = vi.spyOn(bridge, "readFile");
+    const result = resolveTools({
+      cfg: { agents: { defaults: { sandbox: { mode: "all" } } } },
+      sessionKey: "agent:main:cron:mediated-bound-sandbox",
+      workspaceDir,
+      sandboxExecution: {
+        sandbox: createAgentToolsSandboxContext({ workspaceDir, fsBridge: bridge }),
+      },
+      mediatedToolNames: ["read", "write"],
+      excludeToolNames: ["edit", "apply_patch", "exec", "process"],
+    });
+    const writeTool = result.tools.find((tool) => tool.name === "write");
+    const readTool = result.tools.find((tool) => tool.name === "read");
+    expect(writeTool).toBeDefined();
+    expect(readTool).toBeDefined();
+
+    await writeTool!.execute("bound-write", { path: "inside.txt", content: "inside ok" });
+    expect(writeFile).toHaveBeenCalled();
+    await expect(fs.readFile(path.join(workspaceDir, "inside.txt"), "utf8")).resolves.toBe(
+      "inside ok",
+    );
+    await readTool!.execute("bound-read", { path: "inside.txt" });
+    expect(readFile).toHaveBeenCalled();
+
+    await expect(readTool!.execute("bound-read-outside", { path: outsidePath })).rejects.toThrow(
+      /escapes|outside/i,
+    );
+    const escapePath = path.join(base, "escape.txt");
+    await expect(
+      writeTool!.execute("bound-write-outside", { path: escapePath, content: "escape" }),
+    ).rejects.toThrow(/escapes|outside/i);
+    await expect(fs.stat(escapePath)).rejects.toThrow();
+    await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside-sentinel");
+  });
+
+  it("serves a restricted MCP grant's file tools when the grant carries a prepared sandbox", async () => {
+    const workspaceDir = tempDirs.make("openclaw-mcp-bound-sandbox-");
+    const { tools } = await resolveMcpLoopbackScopedTools({
+      cfg: { agents: { defaults: { sandbox: { mode: "all" } } } },
+      sandboxExecution: {
+        sandbox: createAgentToolsSandboxContext({
+          workspaceDir,
+          fsBridge: createHostSandboxFsBridge(workspaceDir),
+        }),
+      },
+      context: {
+        sessionKey: "agent:main:cron:mcp-bound-sandbox",
+        senderIsOwner: true,
+        workspaceDir,
+        toolsAllow: ["read", "write"],
+      },
+    });
+    const names = tools.map((tool) => (tool as { name?: string }).name);
+    expect(names).toContain("read");
+    expect(names).toContain("write");
+  });
 
   it("keeps mediated coding tools for a session that is not sandboxed", () => {
     const workspaceDir = tempDirs.make("openclaw-mediated-unsandboxed-");
