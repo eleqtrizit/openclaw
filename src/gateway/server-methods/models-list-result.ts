@@ -26,7 +26,7 @@ import {
   prepareLogicalVisibleModelCatalog,
 } from "../../agents/model-catalog-visibility.js";
 import type { ModelCatalogSnapshot, ModelCatalogEntry } from "../../agents/model-catalog.types.js";
-import { createModelFastModeResolver } from "../../agents/model-fast-mode.js";
+import { createModelSpeedPolicyResolver } from "../../agents/model-fast-mode.js";
 import { modelKey } from "../../agents/model-ref-shared.js";
 import { dedupeModelCatalogEntries } from "../../agents/model-selection-shared.js";
 import {
@@ -56,7 +56,7 @@ import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-re
 import { loadDeferredCatalog, readPreparedCatalog } from "../server-model-catalog-auth.js";
 import { resolveGatewayModelThinkingProfile } from "../session-utils-model.js";
 import { projectWorkerPlacementAgentRuntime } from "../worker-environments/placement-session-runtime.js";
-import { resolveChatAccountSelection } from "./chat-account-selection.js";
+import { prepareChatAccountSelection } from "./chat-account-selection.js";
 import type { ChatMetadataReadParams, ChatMetadataSessionEntry } from "./chat-metadata-contract.js";
 import { resolveSessionCatalogProfiles } from "./chat-metadata-session-projection.js";
 import { resolveModelProviderCapabilities } from "./model-provider-capabilities.js";
@@ -356,16 +356,17 @@ export async function prepareModelsListResult(
     ...(defaultModels ? { defaultModels } : {}),
     ...(publicProviderOutcomes?.length ? { providerOutcomes: publicProviderOutcomes } : {}),
   };
-  const accountSelection =
+  const readAccountSelection =
     view === "provider-config" || (!scope && !params.requesterProfileId)
       ? undefined
-      : resolveChatAccountSelection({
+      : await prepareChatAccountSelection({
           authStore: projector.authStore,
           sessionEntry,
           requesterProfileId:
             draft?.owner ?? scope?.requesterProfileId ?? params.requesterProfileId,
         });
   const readOutcomeProjection = () => {
+    const accountSelection = readAccountSelection?.();
     const pendingProviders = projector.snapshot.pendingProviders?.filter(
       (provider) =>
         (!providerFilter || normalizeProvider(provider) === providerFilter) &&
@@ -416,7 +417,7 @@ export async function prepareModelsListResult(
     const preserveUnknownAvailability = view === "provider-config" || includeDetails;
     const projectionIsCurrent =
       view === "provider-config" ? isCurrent : () => isCurrent() && decisions.isCurrent();
-    const fastMode = createModelFastModeResolver({
+    const fastMode = createModelSpeedPolicyResolver({
       cfg,
       agentId,
       catalog: modelCatalog,
@@ -501,7 +502,8 @@ export async function prepareModelsListResult(
       const projectedAvailability = preserveUnknownAvailability
         ? evaluation.availability
         : (evaluation.availability ?? false);
-      const supportsFastMode = fastMode(entry, evaluation, preparedEntry.agentRuntime?.id);
+      const speedPolicy = fastMode(entry, evaluation, preparedEntry.agentRuntime?.id);
+      const supportsFastMode = speedPolicy.supportsFastMode;
       const serviceTiers = projectModelServiceTiers({
         config: cfg,
         agentId,
@@ -511,6 +513,7 @@ export async function prepareModelsListResult(
         evaluation,
         runtimeId: preparedEntry.agentRuntime?.id ?? "openclaw",
         accountCatalog,
+        modelServiceTiers: speedPolicy.serviceTiers,
         isCurrent: projectionIsCurrent,
       });
       return Object.assign(
@@ -525,6 +528,9 @@ export async function prepareModelsListResult(
             }
           : {},
         supportsFastMode === undefined ? {} : { supportsFastMode },
+        speedPolicy.supportsServiceTierRecovery === true
+          ? { supportsServiceTierRecovery: true }
+          : {},
         serviceTiers === undefined ? {} : { serviceTiers },
         projectedAvailability === undefined ? {} : { available: projectedAvailability },
         projectedAvailability === false && evaluation.unavailableReason

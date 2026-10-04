@@ -105,8 +105,7 @@ import {
 } from "../embedded-agent-runner/run/attempt-tool-construction-plan.js";
 import { buildCurrentInboundPrompt } from "../embedded-agent-runner/run/runtime-context-prompt.js";
 import { remapSkillReferencePaths } from "../embedded-agent-runner/sandbox-skills.js";
-import { selectContextEngineForTranscriptHost } from "../harness/context-engine-logical-turn.js";
-import { drainPendingContextEngineTurnsBeforeRun } from "../harness/context-engine-turn-attempt.js";
+import { beginContextEngineLogicalTurn } from "../harness/context-engine-turn-begin.js";
 import type { ResolvedProviderAuth } from "../model-auth-runtime-shared.js";
 import { loadManifestModelCatalog, overlayConfiguredModelCatalog } from "../model-catalog.js";
 import { resolveModelContextWindowProfile } from "../model-context-window.js";
@@ -145,6 +144,7 @@ import {
   createCliRunCurrentAssertion,
   resolveCliExecutionTarget,
   retainCliPluginExecutionConsumer,
+  unsupportedIsolatedCompletionError,
 } from "./execution-target.js";
 import { isClaudeCliBackendId, normalizeCliModel } from "./helpers.js";
 import { prepareCliHistoryBoundary } from "./history-boundary.js";
@@ -182,15 +182,6 @@ type PrivateCliBackendPreparedExecution = CliBackendPreparedExecution & {
   isolatedCompletionEnforced?: true;
   secretInput?: CliSecretInput;
 };
-
-function unsupportedIsolatedCompletionError(backendId: string): Error & { code: "unsupported" } {
-  return Object.assign(
-    new Error(
-      `CLI backend "${backendId}" does not support isolated completion; OpenClaw did not start the run.`,
-    ),
-    { name: "IsolatedCompletionUnsupportedError", code: "unsupported" as const },
-  );
-}
 
 type RunCliAgentPrepareParams = RunCliAgentParams & {
   /** Ring-zero tool transport supplied only by the OpenClaw orchestrator. */
@@ -1641,6 +1632,7 @@ async function prepareCliRunContextWithinReadFence(
       : isSideQuestion
         ? extraSystemPrompt
         : await prepareCliSystemPrompt({
+            preparedTtsPreferences: params.preparedTtsPreferences,
             requesterProfileId,
             workspaceDir,
             cwd,
@@ -1936,20 +1928,14 @@ async function prepareCliRunContextWithinReadFence(
     let deferContextEngineDisposalUntil: PreparedCliRunContext["deferContextEngineDisposalUntil"] =
       params.contextEngineLogicalTurnLease?.deferDisposalUntil;
     if (params.contextEngineLogicalTurnLease) {
-      selectContextEngineForTranscriptHost({
+      const effective = await beginContextEngineLogicalTurn({
         lease: params.contextEngineLogicalTurnLease,
         host: contextEngineHostSupport,
-        operation: "agent-run",
         recorder: params.userTurnTranscriptRecorder,
-      });
-      await drainPendingContextEngineTurnsBeforeRun({
-        admission: params.userTurnTranscriptRecorder?.getAdmissionReceipt(),
         isHeartbeat: isHeartbeatLifecycleRunKind(params.bootstrapContextRunKind),
-        lease: params.contextEngineLogicalTurnLease,
-        recorder: params.userTurnTranscriptRecorder,
         sessionTarget: params.sessionTarget,
       });
-      resolvedContextEngine = params.contextEngineLogicalTurnLease.begin().engine;
+      resolvedContextEngine = effective.engine;
     } else {
       const trackDisposal = captureAsyncWorkTracker();
       const ownedEngine = await resolveContextEngine(runConfig, {

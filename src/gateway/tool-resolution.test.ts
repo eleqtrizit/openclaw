@@ -14,8 +14,10 @@ import {
 } from "./mcp-http.runtime.js";
 import { resolveGatewayScopedTools } from "./tool-resolution.js";
 
-function resolveTools(overrides: Partial<Parameters<typeof resolveGatewayScopedTools>[0]> = {}) {
-  return resolveGatewayScopedTools({
+async function resolveTools(
+  overrides: Partial<Parameters<typeof resolveGatewayScopedTools>[0]> = {},
+) {
+  return await resolveGatewayScopedTools({
     cfg: {},
     sessionKey: "agent:main:main",
     surface: "loopback",
@@ -32,8 +34,8 @@ describe("resolveGatewayScopedTools", () => {
     ["webchat", "agent:main:telegram:group:-100123", "message_tool_only", true],
   ] as const)(
     "selects %s room delivery for %s with mode=%s: message=%s",
-    (messageProvider, sessionKey, sourceReplyDeliveryMode, message) => {
-      const result = resolveTools({
+    async (messageProvider, sessionKey, sourceReplyDeliveryMode, message) => {
+      const result = await resolveTools({
         cfg: { tools: { profile: "minimal" } },
         sessionKey,
         messageProvider,
@@ -45,7 +47,7 @@ describe("resolveGatewayScopedTools", () => {
   );
 
   it("rejects collector mode after gateway policy removes its reader", async () => {
-    const result = resolveTools({
+    const result = await resolveTools({
       cfg: {
         agents: { entries: { main: {} } },
         tools: { profile: "coding" },
@@ -61,10 +63,10 @@ describe("resolveGatewayScopedTools", () => {
     ).rejects.toThrow("Collector results are unavailable");
   });
 
-  it("keeps default-agent credentials out of unbound gateway calls", () => {
+  it("keeps default-agent credentials out of unbound gateway calls", async () => {
     const cfg = { agents: { defaults: { imageModel: { primary: "openai/gpt-5.4-mini" } } } };
-    const unbound = resolveTools({ cfg });
-    const grantBound = resolveTools({ cfg, agentDir: "/agents/cli" });
+    const unbound = await resolveTools({ cfg });
+    const grantBound = await resolveTools({ cfg, agentDir: "/agents/cli" });
     expect(unbound.tools.some((tool) => tool.name === "view_image")).toBe(false);
     expect(grantBound.tools.some((tool) => tool.name === "view_image")).toBe(true);
   });
@@ -85,8 +87,8 @@ describe("resolveGatewayScopedTools", () => {
     }
   });
 
-  it("limits gateway actions to the borrowed runtime policy without reassigning the session", () => {
-    const result = resolveTools({
+  it("limits gateway actions to the borrowed runtime policy without reassigning the session", async () => {
+    const result = await resolveTools({
       cfg: {
         plugins: { enabled: false },
         agents: {
@@ -109,15 +111,15 @@ describe("resolveGatewayScopedTools", () => {
     );
   });
 
-  it("rejects a runtime policy agent that conflicts with its session key", () => {
-    expect(() =>
+  it("rejects a runtime policy agent that conflicts with its session key", async () => {
+    await expect(
       resolveTools({
         cfg: { agents: { ownership: "explicit", entries: { main: {}, worker: {} } } },
         agentId: "main",
         runtimePolicySessionKey: "agent:worker:main",
         runtimePolicyAgentId: "main",
       }),
-    ).toThrowError(expect.objectContaining({ code: "AGENT_SELECTION_REQUIRED" }));
+    ).rejects.toThrowError(expect.objectContaining({ code: "AGENT_SELECTION_REQUIRED" }));
   });
 
   it.each([
@@ -189,7 +191,7 @@ describe("resolveGatewayScopedTools", () => {
 
   it("materializes an executable write tool on the mediated CLI surface", async () => {
     const workspaceDir = tempDirs.make("openclaw-mediated-write-");
-    const result = resolveTools({
+    const result = await resolveTools({
       sessionKey: "agent:main:cron:mediated-write",
       workspaceDir,
       mediatedToolNames: ["write"],
@@ -214,7 +216,7 @@ describe("resolveGatewayScopedTools", () => {
       await fs.mkdir(workspaceDir, { recursive: true });
       const outsidePath = path.join(base, "outside.txt");
       await fs.writeFile(outsidePath, "outside-sentinel");
-      const result = resolveTools({
+      const result = await resolveTools({
         cfg: {
           agents: { defaults: { sandbox: { mode } } },
         },
@@ -240,7 +242,7 @@ describe("resolveGatewayScopedTools", () => {
     const bridge = createHostSandboxFsBridge(workspaceDir);
     const writeFile = vi.spyOn(bridge, "writeFile");
     const readFile = vi.spyOn(bridge, "readFile");
-    const result = resolveTools({
+    const result = await resolveTools({
       cfg: { agents: { defaults: { sandbox: { mode: "all" } } } },
       sessionKey: "agent:main:cron:mediated-bound-sandbox",
       workspaceDir,
@@ -278,7 +280,7 @@ describe("resolveGatewayScopedTools", () => {
     const workspaceDir = tempDirs.make("openclaw-mediated-unfenced-bridge-");
     const fenced = createHostSandboxFsBridge(workspaceDir);
     const legacyBridge = { ...fenced, enforcesMutationFence: undefined };
-    const result = resolveTools({
+    const result = await resolveTools({
       cfg: { agents: { defaults: { sandbox: { mode: "all" } } } },
       sessionKey: "agent:main:cron:mediated-unfenced-bridge",
       workspaceDir,
@@ -310,7 +312,7 @@ describe("resolveGatewayScopedTools", () => {
       commandRan = true;
       await realWrite(writeParams);
     });
-    const result = resolveTools({
+    const result = await resolveTools({
       cfg: { agents: { defaults: { sandbox: { mode: "all" } } } },
       sessionKey: "agent:main:cron:mediated-revoked-sandbox",
       workspaceDir,
@@ -358,9 +360,9 @@ describe("resolveGatewayScopedTools", () => {
     expect(names).toContain("write");
   });
 
-  it("keeps mediated coding tools for a session that is not sandboxed", () => {
+  it("keeps mediated coding tools for a session that is not sandboxed", async () => {
     const workspaceDir = tempDirs.make("openclaw-mediated-unsandboxed-");
-    const result = resolveTools({
+    const result = await resolveTools({
       cfg: { agents: { defaults: { sandbox: { mode: "off" } } } },
       sessionKey: "agent:main:cron:mediated-unsandboxed",
       workspaceDir,
@@ -388,8 +390,8 @@ describe("resolveGatewayScopedTools", () => {
     expect(names).not.toContain("write");
   });
 
-  it("applies sandbox tool denies to sandboxed loopback turns", () => {
-    const result = resolveTools({
+  it("applies sandbox tool denies to sandboxed loopback turns", async () => {
+    const result = await resolveTools({
       cfg: {
         agents: { defaults: { sandbox: { mode: "all" } } },
         tools: { sandbox: { tools: { deny: ["sessions_list"] } } },
@@ -407,7 +409,7 @@ describe("resolveGatewayScopedTools", () => {
       .mockResolvedValue(1);
     const onYield = vi.fn();
     try {
-      const result = resolveTools({
+      const result = await resolveTools({
         cfg: { tools: { profile: "minimal", alsoAllow: ["sessions_yield"] } },
         sessionKey: "agent:main:telegram:group:-100123",
         sessionId: "session-123",
