@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { createAgentToolsSandboxContext } from "../agents/test-helpers/agent-tools-sandbox-context.js";
 import { createHostSandboxFsBridge } from "../agents/test-helpers/host-sandbox-fs-bridge.js";
+import { withGatewayToolCallerIdentity } from "../agents/tools/gateway-caller-context.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   McpLoopbackToolCache,
@@ -271,6 +272,48 @@ describe("resolveGatewayScopedTools", () => {
     ).rejects.toThrow(/escapes|outside/i);
     await expect(fs.stat(escapePath)).rejects.toThrow();
     await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside-sentinel");
+  });
+
+  it("rejects a revoked grant before a sandbox write reaches the bridge command", async () => {
+    const base = tempDirs.make("openclaw-mediated-revoked-sandbox-");
+    const workspaceDir = path.join(base, "ws");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    const bridge = createHostSandboxFsBridge(workspaceDir);
+    let revoked = false;
+    const realWrite = bridge.writeFile.bind(bridge);
+    let commandRan = false;
+    vi.spyOn(bridge, "writeFile").mockImplementation(async (writeParams) => {
+      // The bridge awaits its path checks, during which the grant is revoked.
+      await Promise.resolve();
+      revoked = true;
+      writeParams.assertBeforeMutation?.();
+      commandRan = true;
+      await realWrite(writeParams);
+    });
+    const result = resolveTools({
+      cfg: { agents: { defaults: { sandbox: { mode: "all" } } } },
+      sessionKey: "agent:main:cron:mediated-revoked-sandbox",
+      workspaceDir,
+      sandboxExecution: {
+        sandbox: createAgentToolsSandboxContext({ workspaceDir, fsBridge: bridge }),
+      },
+      isGrantCurrent: () => !revoked,
+      mediatedToolNames: ["write"],
+      excludeToolNames: ["read", "edit", "apply_patch", "exec", "process"],
+    });
+    const writeTool = result.tools.find((tool) => tool.name === "write");
+    await expect(
+      withGatewayToolCallerIdentity(
+        {
+          agentId: "main",
+          sessionKey: "agent:main:cron:mediated-revoked-sandbox",
+          receiptAuthority: () => !revoked,
+        },
+        () => writeTool!.execute("revoked-write", { path: "late.txt", content: "must not land" }),
+      ),
+    ).rejects.toThrow(/no longer active/i);
+    expect(commandRan).toBe(false);
+    await expect(fs.stat(path.join(workspaceDir, "late.txt"))).rejects.toThrow();
   });
 
   it("serves a restricted MCP grant's file tools when the grant carries a prepared sandbox", async () => {

@@ -220,6 +220,7 @@ class RemoteShellSandboxFsBridge implements SandboxFsBridge {
         mkdir: params.mkdir !== false,
       }),
       signal: params.signal,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
   }
 
@@ -279,6 +280,7 @@ class RemoteShellSandboxFsBridge implements SandboxFsBridge {
       stdin: buffer,
       allowFailure: kind === "create" ? true : undefined,
       signal: params.signal,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
     return { result, containerPath: target.containerPath };
   }
@@ -315,6 +317,7 @@ class RemoteShellSandboxFsBridge implements SandboxFsBridge {
         pinned: { mountRootPath: pinned.mountRootPath, relativePath: pinned.relativeParentPath },
       }),
       signal: params.signal,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
   }
 
@@ -350,6 +353,7 @@ class RemoteShellSandboxFsBridge implements SandboxFsBridge {
       }),
       signal: params.signal,
       allowFailure: params.force !== false,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
   }
 
@@ -380,6 +384,7 @@ class RemoteShellSandboxFsBridge implements SandboxFsBridge {
         destination: toPinned,
       }),
       signal: params.signal,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
   }
 
@@ -687,14 +692,18 @@ class RemoteShellSandboxFsBridge implements SandboxFsBridge {
     stdin?: Buffer | string;
     signal?: AbortSignal;
     allowFailure?: boolean;
+    assertBeforeMutation?: () => void;
   }): Promise<SandboxBackendCommandResult> {
+    // Last synchronous point before the remote command, after every awaited check.
+    params.assertBeforeMutation?.();
+    const { assertBeforeMutation: _assertBeforeMutation, ...command } = params;
     return await this.runtime.runRemoteShellScript({
       script: [
         "set -eu",
         `python_script=${SANDBOX_PINNED_MUTATION_PYTHON_SHELL_LITERAL}`,
         'python3 -c "$python_script" "$@"',
       ].join("\n"),
-      ...params,
+      ...command,
     });
   }
 }

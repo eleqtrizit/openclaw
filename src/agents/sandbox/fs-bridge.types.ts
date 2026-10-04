@@ -103,6 +103,12 @@ export type SandboxFsBridge = {
     /** Pre-authorized canonical destination from resolvePinnedMutationTarget. */
     pinnedPath?: string;
     signal?: AbortSignal;
+    /**
+     * Called immediately before the mutating command runs, after every awaited
+     * path-safety check. Throw to abort; lets a caller fence the final effect
+     * to the lifetime of its own authority.
+     */
+    assertBeforeMutation?: () => void;
   }): Promise<void>;
   writeFile(params: {
     filePath: string;
@@ -113,6 +119,12 @@ export type SandboxFsBridge = {
     /** Pre-authorized canonical mutation target from resolvePinnedMutationTarget. */
     pinnedPath?: string;
     signal?: AbortSignal;
+    /**
+     * Called immediately before the mutating command runs, after every awaited
+     * path-safety check. Throw to abort; lets a caller fence the final effect
+     * to the lifetime of its own authority.
+     */
+    assertBeforeMutation?: () => void;
   }): Promise<void>;
   /**
    * Atomically creates a file only when no entry already exists at the path.
@@ -128,6 +140,12 @@ export type SandboxFsBridge = {
     /** Pre-authorized canonical destination from resolvePinnedMutationTarget. */
     pinnedPath?: string;
     signal?: AbortSignal;
+    /**
+     * Called immediately before the mutating command runs, after every awaited
+     * path-safety check. Throw to abort; lets a caller fence the final effect
+     * to the lifetime of its own authority.
+     */
+    assertBeforeMutation?: () => void;
   }): Promise<void>;
   remove(params: {
     filePath: string;
@@ -137,8 +155,25 @@ export type SandboxFsBridge = {
     /** Pre-authorized canonical destination from resolvePinnedMutationTarget. */
     pinnedPath?: string;
     signal?: AbortSignal;
+    /**
+     * Called immediately before the mutating command runs, after every awaited
+     * path-safety check. Throw to abort; lets a caller fence the final effect
+     * to the lifetime of its own authority.
+     */
+    assertBeforeMutation?: () => void;
   }): Promise<void>;
-  rename(params: { from: string; to: string; cwd?: string; signal?: AbortSignal }): Promise<void>;
+  rename(params: {
+    from: string;
+    to: string;
+    cwd?: string;
+    signal?: AbortSignal;
+    /**
+     * Called immediately before the mutating command runs, after every awaited
+     * path-safety check. Throw to abort; lets a caller fence the final effect
+     * to the lifetime of its own authority.
+     */
+    assertBeforeMutation?: () => void;
+  }): Promise<void>;
   stat(params: {
     filePath: string;
     cwd?: string;

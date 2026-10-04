@@ -163,6 +163,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
         mkdir: params.mkdir !== false,
       }),
       signal: params.signal,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
   }
 
@@ -211,6 +212,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
       allowFailure: kind === "create" ? true : undefined,
       stdin: buffer,
       signal: params.signal,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
     return { result, containerPath: target.containerPath };
   }
@@ -240,6 +242,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
         ),
       }),
       signal: params.signal,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
   }
 
@@ -268,6 +271,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
         force: params.force,
       }),
       signal: params.signal,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
   }
 
@@ -301,6 +305,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
         destination: this.pathGuard.resolvePinnedEntry(to, "rename files"),
       }),
       signal: params.signal,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
   }
 
@@ -428,7 +433,11 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
   }
 
   private async runCheckedCommand(
-    plan: SandboxFsCommandPlan & { stdin?: Buffer | string; signal?: AbortSignal },
+    plan: SandboxFsCommandPlan & {
+      stdin?: Buffer | string;
+      signal?: AbortSignal;
+      assertBeforeMutation?: () => void;
+    },
   ): Promise<SandboxBackendCommandResult> {
     await this.pathGuard.assertPathChecks(plan.checks);
     if (plan.recheckBeforeCommand) {
@@ -436,6 +445,9 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
       // checks immediately before command execution to close TOCTOU gaps.
       await this.pathGuard.assertPathChecks(plan.checks);
     }
+    // Last synchronous point before the command: the caller's authority must
+    // still be live after every awaited check above.
+    plan.assertBeforeMutation?.();
     return await this.runCommand(plan.script, {
       args: plan.args,
       stdin: plan.stdin,

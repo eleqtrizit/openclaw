@@ -251,6 +251,22 @@ describe("rooted CLI preparation", () => {
     expect(projectTools.mock.calls[0]?.[0].sandboxExecution?.sandbox).toBe(sandbox);
   });
 
+  it.each([
+    { label: "an empty cap", toolsAllow: [] as string[] },
+    { label: "a cap with only non-coding tools", toolsAllow: ["session_status"] },
+  ])("does not provision a sandbox for $label", async ({ toolsAllow }) => {
+    resolveSandboxContext.mockRejectedValue(new Error("sandbox backend unavailable"));
+    await prepare({
+      rootedExecution: undefined,
+      sessionKey: "agent:main:cron:no-coding-tools",
+      toolsAllow,
+      config: { agents: { defaults: { sandbox: { mode: "all", workspaceAccess: "rw" } } } },
+    });
+
+    expect(resolveSandboxContext).not.toHaveBeenCalled();
+    expect(mintGrant.mock.calls[0]?.[0].sandboxExecution).toBeUndefined();
+  });
+
   it("does not prepare a sandbox for an unrestricted run or an unsandboxed restricted run", async () => {
     await prepare({
       rootedExecution: undefined,

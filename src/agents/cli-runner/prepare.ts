@@ -34,6 +34,7 @@ import {
 import {
   resolveMcpLoopbackPolicyTools,
   resolveMcpLoopbackScopedTools,
+  selectsMediatedCodingTools,
 } from "../../gateway/mcp-http.runtime.js";
 import { claimHeartbeatContextForUserRun } from "../../infra/heartbeat-outcome-store.js";
 import { buildSystemAgentToolsMcpServerConfig } from "../../mcp/openclaw-tools-serve-config.js";
@@ -424,8 +425,11 @@ async function prepareCliRunContextWithinReadFence(
     !skipsTurnPreparation &&
     params.disableTools !== true &&
     backendResolved.bundleMcp &&
-    // Only restricted runs and completion handoffs are served mediated coding tools.
-    (runtimeToolsAllowPolicy !== undefined || params.trustedInternalHandoff !== undefined) &&
+    // Prepare a sandbox only when the run is served mediated coding tools: a
+    // completion handoff, or a cap that selects at least one coding tool.
+    (params.trustedInternalHandoff !== undefined ||
+      (runtimeToolsAllowPolicy !== undefined &&
+        selectsMediatedCodingTools(runtimeToolsAllowPolicy))) &&
     resolveSandboxRuntimeStatus({
       cfg: runConfig,
       sessionKey: policySessionKey,

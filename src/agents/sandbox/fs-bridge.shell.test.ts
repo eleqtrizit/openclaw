@@ -58,6 +58,56 @@ describe("sandbox fs bridge shell compatibility", () => {
     });
   });
 
+  it.each(["writeFile", "mkdirp", "remove", "rename"] as const)(
+    "runs the caller's authority fence after the path checks and before the %s command",
+    async (method) => {
+      await withTempDir("openclaw-fs-bridge-fence-", async (stateDir) => {
+        const workspaceDir = path.join(stateDir, "workspace");
+        await fs.mkdir(workspaceDir, { recursive: true });
+        await fs.writeFile(path.join(workspaceDir, "a.txt"), "hello");
+        const bridge = createSandboxFsBridge({
+          sandbox: createSandbox({ workspaceDir, agentWorkspaceDir: workspaceDir }),
+        });
+        const call = (assertBeforeMutation: () => void) => {
+          switch (method) {
+            case "writeFile":
+              return bridge.writeFile({ filePath: "a.txt", data: "x", assertBeforeMutation });
+            case "mkdirp":
+              return bridge.mkdirp({ filePath: "nested", assertBeforeMutation });
+            case "remove":
+              return bridge.remove({ filePath: "a.txt", assertBeforeMutation });
+            case "rename":
+              return bridge.rename({ from: "a.txt", to: "b.txt", assertBeforeMutation });
+          }
+        };
+
+        // Baseline: the live fence lets the mutation command run.
+        mockedExecDockerRaw.mockClear();
+        let fenceCalls = 0;
+        await call(() => {
+          fenceCalls += 1;
+        });
+        expect(fenceCalls).toBe(1);
+        const baselineCalls = mockedExecDockerRaw.mock.calls.length;
+        const mutationCall = getScriptsFromCalls().filter((script) =>
+          script.includes("python3"),
+        ).length;
+        expect(mutationCall).toBeGreaterThan(0);
+
+        // Revoked: the fence throws after every awaited check, so no mutation
+        // command is dispatched (the pre-mutation checks have already run).
+        mockedExecDockerRaw.mockClear();
+        await expect(
+          call(() => {
+            throw new Error("tool invocation authority is no longer active");
+          }),
+        ).rejects.toThrow("tool invocation authority is no longer active");
+        expect(mockedExecDockerRaw.mock.calls.length).toBeLessThan(baselineCalls);
+        expectNoScriptsContaining(getScriptsFromCalls(), "python3");
+      });
+    },
+  );
+
   it("path canonicalization recheck script is valid POSIX sh", async () => {
     const bridge = createSandboxFsBridge({ sandbox: createSandbox() });
 

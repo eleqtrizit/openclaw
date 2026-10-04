@@ -170,6 +170,14 @@ function resolveMediatedNativeTools(
   );
 }
 
+/**
+ * Whether a restricted run's cap selects any mediated coding tool, so callers
+ * can skip preparing a sandbox for tool-free or non-coding runs.
+ */
+export function selectsMediatedCodingTools(toolsAllow: string[] | undefined): boolean {
+  return resolveMediatedNativeTools(toolsAllow, "policy").size > 0;
+}
+
 async function resolveNodeExecScope(
   params: CapturedMcpLoopbackScope,
   mode: LoopbackToolsAllowMode,
