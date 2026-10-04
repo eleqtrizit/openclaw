@@ -318,3 +318,80 @@ describe("openshell remote command launch fence", () => {
     expect(sdkMocks.disposeSshSandboxSession).toHaveBeenCalled();
   });
 });
+
+describe("openshell mirror-mode bridge fence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await Promise.all(tempWorkspaces.splice(0).map((workspace) => workspace.cleanup()));
+  });
+
+  it("declares the fence on the backend-wrapped mirror bridge and runs it before the remote upload", async () => {
+    const workspace = await tempWorkspace({
+      rootDir: resolvePreferredOpenClawTmpDir(),
+      prefix: "openclaw-openshell-mirror-fence-",
+    });
+    tempWorkspaces.push(workspace);
+    cliMocks.createOpenShellSshSession.mockResolvedValue({
+      command: "ssh",
+      configPath: "/tmp/openclaw-openshell-test-ssh-config",
+      host: "openshell-test",
+    });
+    cliMocks.runOpenShellCli.mockResolvedValue({ code: 0, stdout: "", stderr: "" });
+    sdkMocks.runSshSandboxCommand.mockResolvedValue({
+      stdout: Buffer.from("1\n"),
+      stderr: Buffer.alloc(0),
+      code: 0,
+    });
+    const backend = await createOpenShellSandboxBackendFactory({
+      pluginConfig: resolveOpenShellPluginConfig({ command: "openshell", mode: "mirror" }),
+    })({
+      sessionKey: "agent:main:turn",
+      scopeKey: "agent:main",
+      workspaceDir: workspace.dir,
+      agentWorkspaceDir: workspace.dir,
+      cfg: createOpenShellBackendSandboxConfig(),
+    });
+    const bridge = backend.createFsBridge!({
+      sandbox: {
+        backendId: "openshell",
+        workspaceDir: workspace.dir,
+        agentWorkspaceDir: workspace.dir,
+        containerWorkdir: "/sandbox",
+        workspaceAccess: "rw",
+        containerName: "proof",
+        runtimeId: "proof",
+        docker: {},
+        backend,
+      } as never,
+    });
+    expect(bridge.enforcesMutationFence).toBe(true);
+
+    // Live fence: the upload happens. Revoked fence: it never reaches the upload.
+    await bridge.writeFile({ filePath: "live.txt", data: "ok", assertBeforeMutation: () => {} });
+    const uploads = () =>
+      cliMocks.runOpenShellCli.mock.calls.filter(
+        ([params]) => params.args[0] === "sandbox" && params.args[1] === "upload",
+      ).length;
+    const afterLive = uploads();
+    expect(afterLive).toBeGreaterThan(0);
+
+    let calls = 0;
+    await bridge
+      .writeFile({
+        filePath: "late.txt",
+        data: "x",
+        // Live for the bridge's own checks, revoked when the backend re-checks before upload.
+        assertBeforeMutation: () => {
+          calls += 1;
+          if (calls >= 6) {
+            throw new Error("tool invocation authority is no longer active");
+          }
+        },
+      })
+      .catch(() => undefined);
+    expect(uploads()).toBe(afterLive);
+  });
+});

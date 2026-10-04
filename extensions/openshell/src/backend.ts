@@ -288,16 +288,20 @@ class OpenShellSandboxBackendImpl {
       sandbox,
       backend: {
         remoteAgentWorkspaceDir: this.params.remoteAgentWorkspaceDir,
-        mkdirpRemotePath: (remotePath, signal) => this.mkdirpRemotePath(remotePath, signal),
+        mkdirpRemotePath: (remotePath, signal, assertBeforeMutation) =>
+          this.mkdirpRemotePath(remotePath, signal, assertBeforeMutation),
         removeRemotePath: (remotePath, params) => this.removeRemotePath(remotePath, params),
-        renameRemotePath: (from, to, signal) => this.renameRemotePath(from, to, signal),
-        syncLocalPathToRemote: (localPath, remotePath) =>
-          this.syncLocalPathToRemote(localPath, remotePath),
+        renameRemotePath: (from, to, signal, assertBeforeMutation) =>
+          this.renameRemotePath(from, to, signal, assertBeforeMutation),
+        syncLocalPathToRemote: (localPath, remotePath, assertBeforeMutation) =>
+          this.syncLocalPathToRemote(localPath, remotePath, assertBeforeMutation),
       },
     });
     // Hold one lease across validation and both commits, not just the remote step.
     // Otherwise exec publication can erase a successful file-tool write or expose partial reads.
     return {
+      // The wrapped bridge forwards the fence to the backend; declare it here too.
+      enforcesMutationFence: bridge.enforcesMutationFence,
       get pathMappings() {
         return bridge.pathMappings;
       },
