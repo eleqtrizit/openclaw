@@ -274,3 +274,47 @@ describe("openshell remote-mode seed across gateway restart", () => {
     }
   });
 });
+
+describe("openshell remote command launch fence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    await Promise.all(tempWorkspaces.splice(0).map((workspace) => workspace.cleanup()));
+  });
+
+  const marker = "echo fence-launch-marker";
+  const launched = () =>
+    sdkMocks.runSshSandboxCommand.mock.calls.filter(([params]) =>
+      String(params.remoteCommand).includes("fence-launch-marker"),
+    );
+
+  it("runs the caller's fence after SSH session setup and launches when it stays live", async () => {
+    const backend = await createAdoptedRemoteBackend({ probeStdout: "1\n" });
+    let sessionsCreatedAtFence = -1;
+    await backend.runShellCommand({
+      script: marker,
+      assertBeforeMutation: () => {
+        sessionsCreatedAtFence = cliMocks.createOpenShellSshSession.mock.calls.length;
+      },
+    });
+    expect(sessionsCreatedAtFence).toBeGreaterThan(0);
+    expect(launched()).toHaveLength(1);
+  });
+
+  it("does not send the command when the fence throws after session setup", async () => {
+    const backend = await createAdoptedRemoteBackend({ probeStdout: "1\n" });
+    await expect(
+      backend.runShellCommand({
+        script: marker,
+        assertBeforeMutation: () => {
+          throw new Error("tool invocation authority is no longer active");
+        },
+      }),
+    ).rejects.toThrow("no longer active");
+    expect(cliMocks.createOpenShellSshSession).toHaveBeenCalled();
+    expect(launched()).toHaveLength(0);
+    expect(sdkMocks.disposeSshSandboxSession).toHaveBeenCalled();
+  });
+});
