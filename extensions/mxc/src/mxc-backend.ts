@@ -163,6 +163,7 @@ export function createMxcSandboxBackendHandle(params: {
       }
     },
     capabilities: {},
+    enforcesMutationFence: true,
 
     async buildExecSpec({ command, workdir, env, usePty }): Promise<SandboxBackendExecSpec> {
       const effectiveWorkdir = resolveWorkdirInsideWorkspace(

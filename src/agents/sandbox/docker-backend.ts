@@ -199,6 +199,7 @@ function createContainerSandboxBackendHandle(params: {
     runtimeLabel: params.containerName,
     workdir: params.workdir,
     env: params.env,
+    enforcesMutationFence: true,
     configLabel: params.image,
     configLabelKind: "Image",
     capabilities: {

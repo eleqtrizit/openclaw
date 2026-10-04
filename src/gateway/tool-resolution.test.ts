@@ -296,6 +296,28 @@ describe("resolveGatewayScopedTools", () => {
     expect(names).not.toContain("edit");
   });
 
+  it("withholds mutating tools when a legacy backend sits behind the default bridge", async () => {
+    const workspaceDir = tempDirs.make("openclaw-mediated-legacy-backend-");
+    const { createSandboxFsBridge } = await import("../agents/sandbox/fs-bridge.js");
+    const sandbox = createAgentToolsSandboxContext({ workspaceDir });
+    sandbox.backend = {
+      runShellCommand: async () => ({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), code: 0 }),
+    } as never;
+    sandbox.fsBridge = createSandboxFsBridge({ sandbox: sandbox as never });
+    const result = await resolveTools({
+      cfg: { agents: { defaults: { sandbox: { mode: "all" } } } },
+      sessionKey: "agent:main:cron:mediated-legacy-backend",
+      workspaceDir,
+      sandboxExecution: { sandbox },
+      mediatedToolNames: ["read", "write", "edit"],
+      excludeToolNames: ["ls", "apply_patch", "exec", "process"],
+    });
+    const names = result.tools.map((tool) => tool.name);
+    expect(names).toContain("read");
+    expect(names).not.toContain("write");
+    expect(names).not.toContain("edit");
+  });
+
   it("rejects a revoked grant before a sandbox write reaches the bridge command", async () => {
     const base = tempDirs.make("openclaw-mediated-revoked-sandbox-");
     const workspaceDir = path.join(base, "ws");

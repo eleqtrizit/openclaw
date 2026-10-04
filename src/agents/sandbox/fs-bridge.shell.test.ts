@@ -148,6 +148,30 @@ describe("sandbox fs bridge shell compatibility", () => {
     },
   );
 
+  it("advertises the mutation fence only when the delegated backend honors it", async () => {
+    const runShellCommand = async () => ({
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+      code: 0,
+    });
+    const base = createSandbox();
+    // No backend handle: the built-in container runner honors the fence.
+    expect(
+      createSandboxFsBridge({ sandbox: { ...base, backend: undefined } }).enforcesMutationFence,
+    ).toBe(true);
+    // A legacy plugin backend that never declared support must not be promised a fence.
+    expect(
+      createSandboxFsBridge({ sandbox: { ...base, backend: { runShellCommand } } })
+        .enforcesMutationFence,
+    ).toBeUndefined();
+    // A backend that declares it keeps the capability.
+    expect(
+      createSandboxFsBridge({
+        sandbox: { ...base, backend: { runShellCommand, enforcesMutationFence: true } },
+      }).enforcesMutationFence,
+    ).toBe(true);
+  });
+
   it("path canonicalization recheck script is valid POSIX sh", async () => {
     const bridge = createSandboxFsBridge({ sandbox: createSandbox() });
 

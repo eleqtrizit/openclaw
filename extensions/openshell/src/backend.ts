@@ -269,6 +269,7 @@ class OpenShellSandboxBackendImpl {
       finalizeExec: async ({ token }) => {
         await this.finalizeExec(token as PendingExec | undefined);
       },
+      enforcesMutationFence: true,
       runShellCommand: runRemoteShellScript,
       createFsBridge: ({ sandbox }) =>
         this.params.execContext.config.mode === "remote"

@@ -149,6 +149,7 @@ class RemoteShellSandboxBackendImpl {
           await pending.session.dispose();
         }
       },
+      enforcesMutationFence: true,
       runShellCommand: (command) => this.runRemoteShellScript(command),
       createFsBridge: ({ sandbox }) =>
         createRemoteShellSandboxFsBridge({

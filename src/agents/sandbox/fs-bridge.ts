@@ -74,7 +74,15 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
     };
   }
 
-  readonly enforcesMutationFence = true as const;
+  /**
+   * The default bridge delegates its final effect to the backend's command
+   * runner, so it can only promise the fence when that runner honors it. With no
+   * backend handle it uses the built-in container runner, which does.
+   */
+  get enforcesMutationFence(): true | undefined {
+    const backend = this.sandbox.backend;
+    return backend === undefined || backend.enforcesMutationFence === true ? true : undefined;
+  }
 
   get pathMappings(): NonNullable<SandboxFsBridge["pathMappings"]> {
     return this.mounts;
