@@ -101,7 +101,10 @@ class OpenShellFsBridge implements SandboxFsBridge {
     await root.write(relativeToRoot(target, hostPath), buffer, {
       mkdir: params.mkdir,
       mutationSymlinks: "reject",
+      assertBeforeMutation: params.assertBeforeMutation,
     });
+    // The mirror sync is a second effect; re-check before it leaves the host.
+    params.assertBeforeMutation?.();
     await this.backend.syncLocalPathToRemote(hostPath, target.containerPath);
   }
 
@@ -119,6 +122,7 @@ class OpenShellFsBridge implements SandboxFsBridge {
       await root.create(relativeToRoot(target, hostPath), buffer, {
         mkdir: params.mkdir !== false,
         mutationSymlinks: "reject",
+        assertBeforeMutation: params.assertBeforeMutation,
       });
     } catch (error) {
       if (error instanceof FsSafeError && error.code === "already-exists") {
@@ -128,21 +132,30 @@ class OpenShellFsBridge implements SandboxFsBridge {
     }
     // Mirror mode treats local state as canonical. Syncing may fail, but must
     // never downgrade the exclusive local create to an overwriting write.
+    params.assertBeforeMutation?.();
     await this.backend.syncLocalPathToRemote(hostPath, target.containerPath);
     return "created";
   }
 
-  async mkdirp(params: { filePath: string; cwd?: string; signal?: AbortSignal }): Promise<void> {
+  async mkdirp(params: {
+    filePath: string;
+    cwd?: string;
+    signal?: AbortSignal;
+    assertBeforeMutation?: () => void;
+  }): Promise<void> {
     const target = this.resolveTarget(params);
     this.ensureWritable(target, "create directories");
     await assertLocalPathSafety({
       target,
       allowFinalSymlinkForUnlink: false,
     });
+    params.assertBeforeMutation?.();
     await this.backend.mkdirpRemotePath(target.containerPath, params.signal);
     const relativePath = relativeToRoot(target, target.hostPath);
     if (relativePath) {
-      await (await fsRoot(target.mountHostRoot)).mkdir(relativePath);
+      await (
+        await fsRoot(target.mountHostRoot)
+      ).mkdir(relativePath, { assertBeforeMutation: params.assertBeforeMutation });
     }
   }
 
@@ -153,6 +166,7 @@ class OpenShellFsBridge implements SandboxFsBridge {
       target,
       allowFinalSymlinkForUnlink: true,
     });
+    params.assertBeforeMutation?.();
     await this.backend.removeRemotePath(target.containerPath, {
       recursive: params.recursive ?? false,
       signal: params.signal,
@@ -162,6 +176,7 @@ class OpenShellFsBridge implements SandboxFsBridge {
       force: params.force,
       recursive: params.recursive,
       target,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
   }
 
@@ -184,15 +199,19 @@ class OpenShellFsBridge implements SandboxFsBridge {
       root: from.mountHostRoot,
       toHostPath: to.hostPath,
     });
+    params.assertBeforeMutation?.();
     await this.backend.renameRemotePath(from.containerPath, to.containerPath, params.signal);
     const root = await fsRoot(from.mountHostRoot);
     const fromRelativePath = relativeToRoot(from, from.hostPath);
     const toRelativePath = relativeToRoot(to, to.hostPath);
     const parentPath = path.dirname(toRelativePath);
     if (parentPath !== "." && parentPath !== "") {
-      await root.mkdir(parentPath);
+      await root.mkdir(parentPath, { assertBeforeMutation: params.assertBeforeMutation });
     }
-    await root.move(fromRelativePath, toRelativePath, { overwrite: true });
+    await root.move(fromRelativePath, toRelativePath, {
+      overwrite: true,
+      assertBeforeMutation: params.assertBeforeMutation,
+    });
   }
 
   async stat(params: Parameters<SandboxFsBridge["stat"]>[0]): Promise<SandboxFsStat | null> {
@@ -286,6 +305,8 @@ class OpenShellFsBridge implements SandboxFsBridge {
     );
     return containerMounts;
   }
+
+  readonly enforcesMutationFence = true as const;
 
   get pathMappings(): NonNullable<SandboxFsBridge["pathMappings"]> {
     return this.containerMounts()
@@ -409,6 +430,7 @@ async function removeLocalRootPath(params: {
   target: ResolvedMountPath;
   recursive?: boolean;
   force?: boolean;
+  assertBeforeMutation?: () => void;
 }): Promise<void> {
   const root = await fsRoot(params.target.mountHostRoot);
   const relativePath = relativeToRoot(params.target, params.target.hostPath);
@@ -426,6 +448,7 @@ async function removeLocalRootPath(params: {
     for (const target of targets) {
       await root.remove(target, {
         force: params.force !== false,
+        assertBeforeMutation: params.assertBeforeMutation,
         ...(params.recursive
           ? { recursive: true, order: "sorted" as const, maxEntries: Infinity, maxDepth: Infinity }
           : {}),

@@ -14,9 +14,10 @@ export function createSandboxFsBridgeFromResolver(
   pathMappings?: SandboxFsBridge["pathMappings"],
 ): SandboxFsBridge {
   return {
+    enforcesMutationFence: true,
     ...(pathMappings === undefined ? {} : { pathMappings }),
     resolvePath: ({ filePath, cwd }) => resolvePath(filePath, cwd),
-    copyFile: async ({ sourcePath, destinationPath, cwd, mkdir = true }) => {
+    copyFile: async ({ sourcePath, destinationPath, cwd, mkdir = true, assertBeforeMutation }) => {
       const source = resolvePath(sourcePath, cwd);
       const destination = resolvePath(destinationPath, cwd);
       if (!source.hostPath || !destination.hostPath) {
@@ -25,6 +26,7 @@ export function createSandboxFsBridgeFromResolver(
         );
       }
       if (mkdir) {
+        assertBeforeMutation?.();
         await fs.mkdir(path.dirname(destination.hostPath), { recursive: true });
       }
       await fs.copyFile(source.hostPath, destination.hostPath);
@@ -36,23 +38,25 @@ export function createSandboxFsBridgeFromResolver(
       }
       return fs.readFile(target.hostPath);
     },
-    writeFile: async ({ filePath, cwd, data, mkdir = true }) => {
+    writeFile: async ({ filePath, cwd, data, mkdir = true, assertBeforeMutation }) => {
       const target = resolvePath(filePath, cwd);
       if (!target.hostPath) {
         throw new Error(`Expected hostPath for ${target.containerPath}`);
       }
       if (mkdir) {
+        assertBeforeMutation?.();
         await fs.mkdir(path.dirname(target.hostPath), { recursive: true });
       }
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
       await fs.writeFile(target.hostPath, buffer);
     },
-    createFileExclusive: async ({ filePath, cwd, data, mkdir = true }) => {
+    createFileExclusive: async ({ filePath, cwd, data, mkdir = true, assertBeforeMutation }) => {
       const target = resolvePath(filePath, cwd);
       if (!target.hostPath) {
         throw new Error(`Expected hostPath for ${target.containerPath}`);
       }
       if (mkdir) {
+        assertBeforeMutation?.();
         await fs.mkdir(path.dirname(target.hostPath), { recursive: true });
       }
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
@@ -66,24 +70,26 @@ export function createSandboxFsBridgeFromResolver(
         throw error;
       }
     },
-    mkdirp: async ({ filePath, cwd }) => {
+    mkdirp: async ({ filePath, cwd, assertBeforeMutation }) => {
       const target = resolvePath(filePath, cwd);
       if (!target.hostPath) {
         throw new Error(`Expected hostPath for ${target.containerPath}`);
       }
+      assertBeforeMutation?.();
       await fs.mkdir(target.hostPath, { recursive: true });
     },
-    remove: async ({ filePath, cwd, recursive, force }) => {
+    remove: async ({ filePath, cwd, recursive, force, assertBeforeMutation }) => {
       const target = resolvePath(filePath, cwd);
       if (!target.hostPath) {
         throw new Error(`Expected hostPath for ${target.containerPath}`);
       }
+      assertBeforeMutation?.();
       await fs.rm(target.hostPath, {
         recursive: recursive ?? false,
         force: force ?? false,
       });
     },
-    rename: async ({ from, to, cwd }) => {
+    rename: async ({ from, to, cwd, assertBeforeMutation }) => {
       const source = resolvePath(from, cwd);
       const target = resolvePath(to, cwd);
       if (!source.hostPath || !target.hostPath) {
@@ -91,6 +97,7 @@ export function createSandboxFsBridgeFromResolver(
           `Expected hostPath for rename: ${source.containerPath} -> ${target.containerPath}`,
         );
       }
+      assertBeforeMutation?.();
       await fs.mkdir(path.dirname(target.hostPath), { recursive: true });
       await fs.rename(source.hostPath, target.hostPath);
     },

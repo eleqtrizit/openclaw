@@ -87,7 +87,8 @@ describe("sandbox fs bridge shell compatibility", () => {
         await call(() => {
           fenceCalls += 1;
         });
-        expect(fenceCalls).toBe(1);
+        // Once in the bridge after its path checks, once at backend command launch.
+        expect(fenceCalls).toBe(2);
         const baselineCalls = mockedExecDockerRaw.mock.calls.length;
         const mutationCall = getScriptsFromCalls().filter((script) =>
           script.includes("python3"),
@@ -103,6 +104,45 @@ describe("sandbox fs bridge shell compatibility", () => {
           }),
         ).rejects.toThrow("tool invocation authority is no longer active");
         expect(mockedExecDockerRaw.mock.calls.length).toBeLessThan(baselineCalls);
+        expectNoScriptsContaining(getScriptsFromCalls(), "python3");
+      });
+    },
+  );
+
+  it.each(["writeFile", "mkdirp", "remove", "rename"] as const)(
+    "re-runs the authority fence at command launch, after backend preparation, for %s",
+    async (method) => {
+      await withTempDir("openclaw-fs-bridge-launch-fence-", async (stateDir) => {
+        const workspaceDir = path.join(stateDir, "workspace");
+        await fs.mkdir(workspaceDir, { recursive: true });
+        await fs.writeFile(path.join(workspaceDir, "a.txt"), "hello");
+        const bridge = createSandboxFsBridge({
+          sandbox: createSandbox({ workspaceDir, agentWorkspaceDir: workspaceDir }),
+        });
+        let calls = 0;
+        // Live for the bridge's own pre-command check, revoked by the time the
+        // backend has finished its awaited launch preparation.
+        const assertBeforeMutation = () => {
+          calls += 1;
+          if (calls >= 2) {
+            throw new Error("tool invocation authority is no longer active");
+          }
+        };
+        const run = () => {
+          switch (method) {
+            case "writeFile":
+              return bridge.writeFile({ filePath: "a.txt", data: "x", assertBeforeMutation });
+            case "mkdirp":
+              return bridge.mkdirp({ filePath: "nested", assertBeforeMutation });
+            case "remove":
+              return bridge.remove({ filePath: "a.txt", assertBeforeMutation });
+            case "rename":
+              return bridge.rename({ from: "a.txt", to: "b.txt", assertBeforeMutation });
+          }
+        };
+        mockedExecDockerRaw.mockClear();
+        await expect(run()).rejects.toThrow("no longer active");
+        expect(calls).toBe(2);
         expectNoScriptsContaining(getScriptsFromCalls(), "python3");
       });
     },

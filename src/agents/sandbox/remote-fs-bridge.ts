@@ -71,6 +71,8 @@ class RemoteShellSandboxFsBridge implements SandboxFsBridge {
     };
   }
 
+  readonly enforcesMutationFence = true as const;
+
   get pathMappings(): NonNullable<SandboxFsBridge["pathMappings"]> {
     const mounts = this.getMounts();
     // Use the resolver's exact-target owner, including agent/protected ties.
@@ -696,14 +698,13 @@ class RemoteShellSandboxFsBridge implements SandboxFsBridge {
   }): Promise<SandboxBackendCommandResult> {
     // Last synchronous point before the remote command, after every awaited check.
     params.assertBeforeMutation?.();
-    const { assertBeforeMutation: _assertBeforeMutation, ...command } = params;
     return await this.runtime.runRemoteShellScript({
       script: [
         "set -eu",
         `python_script=${SANDBOX_PINNED_MUTATION_PYTHON_SHELL_LITERAL}`,
         'python3 -c "$python_script" "$@"',
       ].join("\n"),
-      ...command,
+      ...params,
     });
   }
 }

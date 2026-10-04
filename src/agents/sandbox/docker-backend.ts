@@ -332,6 +332,7 @@ async function runContainerSandboxShellCommand(
   }
   // The engine-target probe above can outlive the admitted workspace owner.
   params.assertCurrent?.();
+  params.assertBeforeMutation?.();
   return execContainerRaw(params.engine, dockerArgs, {
     input: params.stdin,
     allowFailure: params.allowFailure,

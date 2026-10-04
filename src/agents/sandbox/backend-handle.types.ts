@@ -24,6 +24,12 @@ export type SandboxBackendCommandParams = {
   stdin?: Buffer | string;
   allowFailure?: boolean;
   signal?: AbortSignal;
+  /**
+   * Caller authority fence for mutating commands. A backend must call it
+   * synchronously after all of its own awaited launch preparation and
+   * immediately before starting the command.
+   */
+  assertBeforeMutation?: () => void;
 };
 
 export type SandboxBackendCommandResult = {

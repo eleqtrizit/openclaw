@@ -23,6 +23,13 @@ export type SandboxFsStat = {
 /** Filesystem operations exposed across the sandbox boundary. */
 export type SandboxFsBridge = {
   /**
+   * Declares that every mutating method honors `assertBeforeMutation`, calling
+   * it after its own awaited preparation and immediately before the final
+   * effect. Bridges that omit this (for example older third-party bridges) are
+   * never given mutating tools for a run whose authority can be revoked.
+   */
+  readonly enforcesMutationFence?: true;
+  /**
    * Backend-owned runtime roots and their local policy projections, in mount
    * precedence order for equal roots. These do not grant access: bridge methods
    * still enforce visibility, read-only rules and physical path safety.

@@ -54,6 +54,37 @@ describe("openshell mirror fs bridges", () => {
     return () => workspace[Symbol.asyncDispose]();
   });
 
+  it("declares the mutation fence and runs it before the local write and the remote sync", async () => {
+    expect(bridge.enforcesMutationFence).toBe(true);
+    const fence = vi.fn();
+    await bridge.writeFile({ filePath: "fenced.txt", data: "ok", assertBeforeMutation: fence });
+    expect(fence).toHaveBeenCalled();
+    expect(backend.syncLocalPathToRemote).toHaveBeenCalledTimes(1);
+    await expect(readLocal("fenced.txt")).resolves.toBe("ok");
+  });
+
+  it.each(["writeFile", "mkdirp", "remove"] as const)(
+    "does not mutate locally or remotely when the fence throws for %s",
+    async (method) => {
+      await seedLocal("victim.txt", "original");
+      const fence = () => {
+        throw new Error("tool invocation authority is no longer active");
+      };
+      const call =
+        method === "writeFile"
+          ? bridge.writeFile({ filePath: "victim.txt", data: "late", assertBeforeMutation: fence })
+          : method === "mkdirp"
+            ? bridge.mkdirp({ filePath: "newdir", assertBeforeMutation: fence })
+            : bridge.remove({ filePath: "victim.txt", assertBeforeMutation: fence });
+      await expect(call).rejects.toThrow("no longer active");
+      await expect(readLocal("victim.txt")).resolves.toBe("original");
+      await expectPathMissing(local("newdir"));
+      expect(backend.syncLocalPathToRemote).not.toHaveBeenCalled();
+      expect(backend.mkdirpRemotePath).not.toHaveBeenCalled();
+      expect(backend.removeRemotePath).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     { workspaceAccess: "none", mutation: "write" },
     { workspaceAccess: "ro", mutation: "write" },

@@ -11,7 +11,6 @@ import { filterToolsByMessageProvider } from "../agents/agent-tools.message-prov
 import { resolveEffectiveToolPolicy } from "../agents/agent-tools.policy.js";
 import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import { nodeExecSchema } from "../agents/bash-tools.schemas.js";
-import { resolveCoreToolFactoryFamily } from "../agents/core-tool-factory-descriptors.js";
 import { applyDelegationCapability } from "../agents/delegation-capability.js";
 import { resolveExecDefaults } from "../agents/exec-defaults.js";
 import { createLazyExecTool, resolveExecToolConfig } from "../agents/lazy-exec-tool.js";
@@ -23,10 +22,7 @@ import {
   resolveSwarmCollectorToolContext,
 } from "../agents/openclaw-tools.swarm.js";
 import { resolveRequesterToolPolicies } from "../agents/requester-tool-policy.js";
-import type {
-  PreparedRootedExecutionCapability,
-  PreparedSandboxExecutionCapability,
-} from "../agents/rooted-run-params.js";
+import type { PreparedRootedExecutionCapability } from "../agents/rooted-run-params.js";
 import { resolveSandboxRuntimeStatus } from "../agents/sandbox/runtime-status.js";
 import { createScheduledMessageInvocationAdmission } from "../agents/scheduled-message-invocation.js";
 import { resolveScheduledToolCallerContext } from "../agents/scheduled-tool-policy.js";
@@ -73,6 +69,7 @@ import type { SkillWorkshopRunOptions } from "../skills/workshop/types.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel-constants.js";
 import { normalizeMessageChannel } from "../utils/message-channel-core.js";
 import type { McpLoopbackRequestContext } from "./mcp-grant-store.js";
+import { decideMediatedSandbox } from "./tool-resolution-mediated-sandbox.js";
 
 type GatewayScopedToolSurface = "http" | "loopback";
 
@@ -91,7 +88,7 @@ export function resolveGatewayScopedTools(
     cfg: OpenClawConfig;
     rootedExecution?: PreparedRootedExecutionCapability;
     /** Host-prepared sandbox for the mediated coding tools of an ordinary sandboxed run. */
-    sandboxExecution?: PreparedSandboxExecutionCapability;
+    sandboxExecution?: import("../agents/rooted-run-params.js").PreparedSandboxExecutionCapability;
     messageActionTurnCapability?: string;
     authProfileStore?: AuthProfileStore;
     agentDir?: string;
@@ -499,24 +496,9 @@ export function resolveGatewayScopedTools(
   const execConfig = includeNodeExecTool
     ? resolveExecToolConfig({ cfg: params.cfg, agentId: policyAgentId })
     : undefined;
-  const mediatedToolFamilies = new Set(Array.from(mediatedToolNames, resolveCoreToolFactoryFamily));
-  const includeMediatedBaseCodingTools = mediatedToolFamilies.has("base-coding");
-  const includeMediatedShellTools = mediatedToolFamilies.has("shell");
-  const wantsMediatedCodingTools =
-    surface === "loopback" && (includeMediatedBaseCodingTools || includeMediatedShellTools);
-  // A sandboxed session must run these tools against its prepared sandbox
-  // filesystem: either the rooted execution's, or the one the CLI runner prepared
-  // for an ordinary restricted run. Without either, the coding tools would fall
-  // back to host paths, so refuse to build them rather than escape the sandbox.
-  const mediatedSandbox = params.rootedExecution?.sandbox ?? params.sandboxExecution?.sandbox;
-  const mediatedCodingToolsLackSandbox = wantsMediatedCodingTools && sandboxed && !mediatedSandbox;
-  if (mediatedCodingToolsLackSandbox) {
-    logWarn(
-      `mediated coding tools withheld for sandboxed session ${params.sessionKey}: no prepared sandbox context is available for this run`,
-    );
-  }
-  const mediatedCodingTools =
-    wantsMediatedCodingTools && !mediatedCodingToolsLackSandbox
+  const mediatedDecision = decideMediatedSandbox({ surface, mediatedToolNames, sandboxed, params });
+  const builtMediatedCodingTools =
+    mediatedDecision.wantsTools && !mediatedDecision.withholdAll
       ? createOpenClawCodingTools({
           config: params.cfg,
           sessionConfigSource: "runtime",
@@ -529,7 +511,7 @@ export function resolveGatewayScopedTools(
           workspaceDir,
           cwd: params.cwd?.trim() || workspaceDir,
           ...params.rootedExecution,
-          sandbox: mediatedSandbox,
+          sandbox: mediatedDecision.sandbox,
           modelProvider: params.modelProvider,
           modelId: params.modelId,
           modelHasVision: params.modelHasVision,
@@ -579,8 +561,8 @@ export function resolveGatewayScopedTools(
             : undefined,
           scheduledToolPolicy: params.scheduledToolPolicy,
           toolConstructionPlan: {
-            includeBaseCodingTools: includeMediatedBaseCodingTools,
-            includeShellTools: includeMediatedShellTools,
+            includeBaseCodingTools: mediatedDecision.includeBaseCodingTools,
+            includeShellTools: mediatedDecision.includeShellTools,
             includeChannelTools: false,
             includeOpenClawTools: false,
             includePluginTools: false,
@@ -589,6 +571,7 @@ export function resolveGatewayScopedTools(
           wrapBeforeToolCallHook: false,
         })
       : [];
+  const mediatedCodingTools = mediatedDecision.filterBuilt(builtMediatedCodingTools);
   // CLI backends already own their local shell. This extra surface is deliberately
   // fixed to node so it cannot become a second path to Gateway-local execution.
   const baseTools = nodeExecSurface

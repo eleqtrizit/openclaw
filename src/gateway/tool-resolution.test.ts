@@ -274,6 +274,26 @@ describe("resolveGatewayScopedTools", () => {
     await expect(fs.readFile(outsidePath, "utf8")).resolves.toBe("outside-sentinel");
   });
 
+  it("withholds mutating file tools when the bound bridge does not declare the mutation fence", async () => {
+    const workspaceDir = tempDirs.make("openclaw-mediated-unfenced-bridge-");
+    const fenced = createHostSandboxFsBridge(workspaceDir);
+    const legacyBridge = { ...fenced, enforcesMutationFence: undefined };
+    const result = resolveTools({
+      cfg: { agents: { defaults: { sandbox: { mode: "all" } } } },
+      sessionKey: "agent:main:cron:mediated-unfenced-bridge",
+      workspaceDir,
+      sandboxExecution: {
+        sandbox: createAgentToolsSandboxContext({ workspaceDir, fsBridge: legacyBridge }),
+      },
+      mediatedToolNames: ["read", "write", "edit", "ls"],
+      excludeToolNames: ["apply_patch", "exec", "process"],
+    });
+    const names = result.tools.map((tool) => tool.name);
+    expect(names).toContain("read");
+    expect(names).not.toContain("write");
+    expect(names).not.toContain("edit");
+  });
+
   it("rejects a revoked grant before a sandbox write reaches the bridge command", async () => {
     const base = tempDirs.make("openclaw-mediated-revoked-sandbox-");
     const workspaceDir = path.join(base, "ws");

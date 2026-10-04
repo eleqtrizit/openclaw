@@ -586,6 +586,8 @@ class OpenShellSandboxBackendImpl {
       context: this.params.execContext,
     });
     try {
+      // SSH session setup is awaited; re-check the caller's authority right before launch.
+      params.assertBeforeMutation?.();
       return await runSshSandboxCommand({
         session,
         remoteCommand: buildRemoteCommand([

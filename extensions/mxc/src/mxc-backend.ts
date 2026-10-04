@@ -277,6 +277,7 @@ export function createMxcSandboxBackendHandle(params: {
           payloadFile.payloadFile,
         ];
         try {
+          cmdParams.assertBeforeMutation?.();
           const result = await runCommandBuffered(argv, {
             baseEnv: buildLauncherEnv(),
             input: execInput,

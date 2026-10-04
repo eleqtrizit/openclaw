@@ -74,6 +74,8 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
     };
   }
 
+  readonly enforcesMutationFence = true as const;
+
   get pathMappings(): NonNullable<SandboxFsBridge["pathMappings"]> {
     return this.mounts;
   }
@@ -453,6 +455,7 @@ class SandboxFsBridgeImpl implements SandboxFsBridge {
       stdin: plan.stdin,
       allowFailure: plan.allowFailure,
       signal: plan.signal,
+      assertBeforeMutation: plan.assertBeforeMutation,
     });
   }
 
