@@ -29,6 +29,7 @@ export function createSandboxFsBridgeFromResolver(
         assertBeforeMutation?.();
         await fs.mkdir(path.dirname(destination.hostPath), { recursive: true });
       }
+      assertBeforeMutation?.();
       await fs.copyFile(source.hostPath, destination.hostPath);
     },
     readFile: async ({ filePath, cwd }) => {
@@ -48,6 +49,7 @@ export function createSandboxFsBridgeFromResolver(
         await fs.mkdir(path.dirname(target.hostPath), { recursive: true });
       }
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      assertBeforeMutation?.();
       await fs.writeFile(target.hostPath, buffer);
     },
     createFileExclusive: async ({ filePath, cwd, data, mkdir = true, assertBeforeMutation }) => {
@@ -61,6 +63,7 @@ export function createSandboxFsBridgeFromResolver(
       }
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
       try {
+        assertBeforeMutation?.();
         await fs.writeFile(target.hostPath, buffer, { flag: "wx" });
         return "created";
       } catch (error) {
@@ -99,6 +102,7 @@ export function createSandboxFsBridgeFromResolver(
       }
       assertBeforeMutation?.();
       await fs.mkdir(path.dirname(target.hostPath), { recursive: true });
+      assertBeforeMutation?.();
       await fs.rename(source.hostPath, target.hostPath);
     },
     stat: async ({ filePath, cwd }) => {

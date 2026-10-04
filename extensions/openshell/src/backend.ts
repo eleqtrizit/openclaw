@@ -524,11 +524,16 @@ class OpenShellSandboxBackendImpl {
     return await this.runRemoteShellScriptInternal(params);
   }
 
-  async mkdirpRemotePath(remotePath: string, signal?: AbortSignal): Promise<void> {
+  async mkdirpRemotePath(
+    remotePath: string,
+    signal?: AbortSignal,
+    assertBeforeMutation?: () => void,
+  ): Promise<void> {
     const target = this.resolveRemoteTarget(remotePath);
     await this.runPinnedRemotePathMutation({
       args: ["mkdirp", target.root, target.relativePath],
       signal,
+      assertBeforeMutation,
     });
   }
 
@@ -538,6 +543,7 @@ class OpenShellSandboxBackendImpl {
       recursive?: boolean;
       signal?: AbortSignal;
       ignoreMissing?: boolean;
+      assertBeforeMutation?: () => void;
     },
   ): Promise<void> {
     const target = this.resolveRemoteTarget(remotePath);
@@ -554,6 +560,7 @@ class OpenShellSandboxBackendImpl {
       ],
       ignoreMissingParent: params?.ignoreMissing,
       signal: params?.signal,
+      assertBeforeMutation: params?.assertBeforeMutation,
     });
   }
 
@@ -561,6 +568,7 @@ class OpenShellSandboxBackendImpl {
     fromRemotePath: string,
     toRemotePath: string,
     signal?: AbortSignal,
+    assertBeforeMutation?: () => void,
   ): Promise<void> {
     const from = this.resolveRemoteTarget(fromRemotePath);
     const to = this.resolveRemoteTarget(toRemotePath);
@@ -576,6 +584,7 @@ class OpenShellSandboxBackendImpl {
         "1",
       ],
       signal,
+      assertBeforeMutation,
     });
   }
 
@@ -606,17 +615,25 @@ class OpenShellSandboxBackendImpl {
     }
   }
 
-  async syncLocalPathToRemote(localPath: string, remotePath: string): Promise<void> {
+  async syncLocalPathToRemote(
+    localPath: string,
+    remotePath: string,
+    assertBeforeMutation?: () => void,
+  ): Promise<void> {
     await this.ensureSandboxExists();
     await this.maybeSeedRemoteWorkspace();
     const target = this.resolveRemoteTarget(remotePath);
     const stats = await fs.lstat(localPath).catch(() => null);
     if (!stats || stats.isSymbolicLink()) {
-      await this.removeRemotePath(remotePath, { recursive: true, ignoreMissing: true });
+      await this.removeRemotePath(remotePath, {
+        recursive: true,
+        ignoreMissing: true,
+        assertBeforeMutation,
+      });
       return;
     }
     if (stats.isDirectory()) {
-      await this.mkdirpRemotePath(remotePath);
+      await this.mkdirpRemotePath(remotePath, undefined, assertBeforeMutation);
       return;
     }
     await this.runPinnedRemotePathMutation({
@@ -627,7 +644,10 @@ class OpenShellSandboxBackendImpl {
           ? ""
           : path.posix.dirname(target.relativePath),
       ],
+      assertBeforeMutation,
     });
+    // Provisioning, seeding, inspection and the remote mkdir above are awaited.
+    assertBeforeMutation?.();
     const result = await runOpenShellCli({
       context: this.params.execContext,
       args: [
@@ -649,6 +669,7 @@ class OpenShellSandboxBackendImpl {
     args: string[];
     ignoreMissingParent?: boolean;
     signal?: AbortSignal;
+    assertBeforeMutation?: () => void;
   }): Promise<SandboxBackendCommandResult> {
     return await this.runRemoteShellScript({
       script: 'python_script="$1"; shift; python3 -c "$python_script" "$@"',
@@ -659,6 +680,7 @@ class OpenShellSandboxBackendImpl {
         ...params.args,
       ],
       signal: params.signal,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
   }
 

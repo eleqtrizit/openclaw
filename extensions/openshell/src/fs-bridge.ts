@@ -105,7 +105,11 @@ class OpenShellFsBridge implements SandboxFsBridge {
     });
     // The mirror sync is a second effect; re-check before it leaves the host.
     params.assertBeforeMutation?.();
-    await this.backend.syncLocalPathToRemote(hostPath, target.containerPath);
+    await this.backend.syncLocalPathToRemote(
+      hostPath,
+      target.containerPath,
+      params.assertBeforeMutation,
+    );
   }
 
   async createFileExclusive(
@@ -133,7 +137,11 @@ class OpenShellFsBridge implements SandboxFsBridge {
     // Mirror mode treats local state as canonical. Syncing may fail, but must
     // never downgrade the exclusive local create to an overwriting write.
     params.assertBeforeMutation?.();
-    await this.backend.syncLocalPathToRemote(hostPath, target.containerPath);
+    await this.backend.syncLocalPathToRemote(
+      hostPath,
+      target.containerPath,
+      params.assertBeforeMutation,
+    );
     return "created";
   }
 
@@ -150,7 +158,11 @@ class OpenShellFsBridge implements SandboxFsBridge {
       allowFinalSymlinkForUnlink: false,
     });
     params.assertBeforeMutation?.();
-    await this.backend.mkdirpRemotePath(target.containerPath, params.signal);
+    await this.backend.mkdirpRemotePath(
+      target.containerPath,
+      params.signal,
+      params.assertBeforeMutation,
+    );
     const relativePath = relativeToRoot(target, target.hostPath);
     if (relativePath) {
       await (
@@ -171,6 +183,7 @@ class OpenShellFsBridge implements SandboxFsBridge {
       recursive: params.recursive ?? false,
       signal: params.signal,
       ignoreMissing: params.force !== false,
+      assertBeforeMutation: params.assertBeforeMutation,
     });
     await removeLocalRootPath({
       force: params.force,
@@ -200,7 +213,12 @@ class OpenShellFsBridge implements SandboxFsBridge {
       toHostPath: to.hostPath,
     });
     params.assertBeforeMutation?.();
-    await this.backend.renameRemotePath(from.containerPath, to.containerPath, params.signal);
+    await this.backend.renameRemotePath(
+      from.containerPath,
+      to.containerPath,
+      params.signal,
+      params.assertBeforeMutation,
+    );
     const root = await fsRoot(from.mountHostRoot);
     const fromRelativePath = relativeToRoot(from, from.hostPath);
     const toRelativePath = relativeToRoot(to, to.hostPath);

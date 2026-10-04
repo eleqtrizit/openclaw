@@ -63,6 +63,31 @@ describe("openshell mirror fs bridges", () => {
     await expect(readLocal("fenced.txt")).resolves.toBe("ok");
   });
 
+  it("hands the fence to every mirror backend operation so it can re-check after its own awaits", async () => {
+    await seedLocal("a.txt", "a");
+    const fence = vi.fn();
+    await bridge.writeFile({ filePath: "w.txt", data: "w", assertBeforeMutation: fence });
+    await bridge.mkdirp({ filePath: "dir", assertBeforeMutation: fence });
+    await bridge.rename({ from: "a.txt", to: "b.txt", assertBeforeMutation: fence });
+    await bridge.remove({ filePath: "b.txt", assertBeforeMutation: fence });
+    expect(backend.syncLocalPathToRemote).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      fence,
+    );
+    expect(backend.mkdirpRemotePath).toHaveBeenCalledWith(expect.any(String), undefined, fence);
+    expect(backend.renameRemotePath).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      undefined,
+      fence,
+    );
+    expect(backend.removeRemotePath).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ assertBeforeMutation: fence }),
+    );
+  });
+
   it.each(["writeFile", "mkdirp", "remove"] as const)(
     "does not mutate locally or remotely when the fence throws for %s",
     async (method) => {
@@ -106,6 +131,7 @@ describe("openshell mirror fs bridges", () => {
       expect(backend.syncLocalPathToRemote).toHaveBeenCalledWith(
         local("nested/file.txt"),
         "/sandbox/nested/file.txt",
+        undefined,
       );
       const skill = mutation === "write" ? "skills/demo/SKILL.md" : ".agents/skills/demo/SKILL.md";
       await seedLocal(skill, "managed instructions");
@@ -200,6 +226,7 @@ describe("openshell mirror fs bridges", () => {
         recursive: false,
         signal: undefined,
         ignoreMissing: false,
+        assertBeforeMutation: undefined,
       });
     },
   );
@@ -353,11 +380,16 @@ describe("openshell mirror fs bridges", () => {
     ).resolves.toBe("created");
     await bridge.mkdirp({ filePath: "./~/nested" });
     expect((await fs.stat(local("~/nested"))).isDirectory()).toBe(true);
-    expect(backend.mkdirpRemotePath).toHaveBeenCalledWith("/sandbox/~/nested", undefined);
+    expect(backend.mkdirpRemotePath).toHaveBeenCalledWith(
+      "/sandbox/~/nested",
+      undefined,
+      undefined,
+    );
     await bridge.rename({ from: "./~/created.txt", to: "./~/nested/target/moved.txt" });
     expect(backend.renameRemotePath).toHaveBeenCalledWith(
       "/sandbox/~/created.txt",
       "/sandbox/~/nested/target/moved.txt",
+      undefined,
       undefined,
     );
     await expect(readLocal("~/nested/target/moved.txt")).resolves.toBe("created");
@@ -366,6 +398,7 @@ describe("openshell mirror fs bridges", () => {
       recursive: false,
       signal: undefined,
       ignoreMissing: false,
+      assertBeforeMutation: undefined,
     });
     await expectPathMissing(local("~/file.txt"));
     await bridge.remove({ filePath: ".", recursive: true });
