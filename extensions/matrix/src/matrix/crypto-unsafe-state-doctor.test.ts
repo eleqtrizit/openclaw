@@ -1,10 +1,12 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Command } from "commander";
 import { resetFileLockStateForTest } from "openclaw/plugin-sdk/file-lock";
 import { resetPluginStateStoreForTests } from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { closeOpenClawStateDatabaseAsync } from "openclaw/plugin-sdk/sqlite-runtime-testing";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { registerMatrixDoctorCommands } from "../cli-doctor.js";
 import { installMatrixTestRuntime } from "../test-runtime.js";
 import { MATRIX_IDB_SNAPSHOT_FILENAME, writeMatrixIdbSnapshotJson } from "./crypto-state-store.js";
 import {
@@ -39,9 +41,37 @@ afterEach(async () => {
   resetPluginStateStoreForTests();
   resetFileLockStateForTest();
   await fs.rm(stateDir, { recursive: true, force: true });
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("Matrix crypto unsafe-state Doctor", () => {
+  it("inspects and explicitly recovers the default snapshot through the Doctor CLI", async () => {
+    const defaultRoot = path.join(stateDir, "matrix");
+    const defaultSnapshot = path.join(defaultRoot, MATRIX_IDB_SNAPSHOT_FILENAME);
+    await fs.writeFile(`${defaultSnapshot}.owner.poisoned`, "unsafe\n");
+    await writeMatrixIdbSnapshotJson({
+      storageRootDir: defaultRoot,
+      snapshotJson: JSON.stringify([{ name: "crypto", version: 1, stores: [] }]),
+      databaseCount: 1,
+    });
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const command = new Command();
+    registerMatrixDoctorCommands(command);
+    await command.parseAsync(["doctor", "inspect", "--json"], { from: "user" });
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      blocked: [{ account: "default", rootDir: defaultRoot }],
+    });
+    await command.parseAsync(
+      ["doctor", "recover", "--account", "default", "--accept-snapshot-rollback"],
+      { from: "user" },
+    );
+    const owner = await acquireMatrixCryptoStoreOwnership(defaultSnapshot);
+    await owner.release();
+    expect(await listMatrixCryptoUnsafeState(stateDir)).toEqual([]);
+  });
+
   it("inspects refusal without clearing it and requires explicit rollback acceptance", async () => {
     await fs.writeFile(markerPath, "unsafe\n");
     expect(await listMatrixCryptoUnsafeState(stateDir)).toEqual([storageRootDir]);

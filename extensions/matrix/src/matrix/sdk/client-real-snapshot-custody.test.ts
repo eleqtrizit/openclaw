@@ -9,6 +9,7 @@ import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMatrixRuntime } from "../../runtime.js";
 import { installMatrixTestRuntime } from "../../test-runtime.js";
+import { writeMatrixIdbSnapshotJson } from "../crypto-state-store.js";
 import { MatrixClient } from "../sdk.js";
 import { persistIdbToDisk } from "./idb-persistence.js";
 import {
@@ -50,6 +51,26 @@ describe("Matrix client custody at the real SQLite snapshot boundary", () => {
     resetFileLockStateForTest();
     resetPluginStateStoreForTests();
     vi.restoreAllMocks();
+  });
+
+  it("refuses a malformed canonical snapshot before Rust initialization without a database prefix", async () => {
+    const storageRootDir = tempDirs.make("matrix-default-prefix-custody-");
+    const snapshotPath = path.join(storageRootDir, "snapshot.json");
+    await writeMatrixIdbSnapshotJson({
+      storageRootDir,
+      databaseCount: 0,
+      snapshotJson: "[]",
+    });
+    const client = new MatrixClient("https://matrix.example.org", "test-token", {
+      userId: "@bot:example.org",
+      deviceId: "BOT",
+      encryption: true,
+      autoBootstrapCrypto: false,
+      idbSnapshotPath: snapshotPath,
+    });
+    clients.push(client);
+    await expect(client.prepareForOneOff()).rejects.toThrow("Malformed IndexedDB snapshot payload");
+    expect(sdk.init).not.toHaveBeenCalled();
   });
 
   it("blocks a concurrent client before SQLite snapshot I/O, then restores after handoff", async () => {

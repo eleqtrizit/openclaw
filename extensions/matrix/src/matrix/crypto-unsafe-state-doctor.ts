@@ -3,12 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { FILE_LOCK_TIMEOUT_ERROR_CODE } from "openclaw/plugin-sdk/file-lock";
 import { getMatrixRuntime } from "../runtime.js";
-import {
-  MATRIX_IDB_SNAPSHOT_FILENAME,
-  openMatrixIdbSnapshotStoreOptions,
-  readMatrixIdbSnapshotJsonFromStore,
-  type MatrixIdbSnapshotRecord,
-} from "./crypto-state-store.js";
+import { MATRIX_IDB_SNAPSHOT_FILENAME, readMatrixIdbSnapshotJson } from "./crypto-state-store.js";
 import {
   clearMatrixCryptoStoreUnsafeState,
   withMatrixCryptoStoreRecoveryLock,
@@ -20,7 +15,7 @@ const MARKER_NAME = `${MATRIX_IDB_SNAPSHOT_FILENAME}.owner.poisoned`;
 export async function listMatrixCryptoUnsafeState(stateDir: string): Promise<string[]> {
   const { entries, failedDirs } = await walkMatrixStateFiles(
     stateDir,
-    (name, depth) => depth === 4 && name === MARKER_NAME,
+    (name, depth) => (depth === 0 || depth === 4) && name === MARKER_NAME,
   );
   if (failedDirs.length > 0) {
     throw failedDirs[0]!.error;
@@ -95,10 +90,10 @@ export async function recoverMatrixCryptoUnsafeState(params: {
       }
       throw error;
     }
-    const store = getMatrixRuntime().state.openKeyedStore<MatrixIdbSnapshotRecord>(
-      openMatrixIdbSnapshotStoreOptions(params.storageRootDir),
+    const snapshot = await readMatrixIdbSnapshotJson(
+      params.storageRootDir,
+      getMatrixRuntime().state,
     );
-    const snapshot = await readMatrixIdbSnapshotJsonFromStore({ store });
     const { isValidMatrixIdbSnapshotJson } = await import("./sdk/idb-persistence.js");
     if (!snapshot || !isValidMatrixIdbSnapshotJson(snapshot)) {
       throw new Error(

@@ -81,9 +81,10 @@ async function syncParentDirectory(filePath: string): Promise<void> {
 }
 
 /** Arm before Rust crypto can mutate state; failure to arm means no crypto work. */
-async function poisonMatrixCryptoStore(snapshotPath: string): Promise<void> {
+async function poisonMatrixCryptoStore(snapshotPath: string, onCreated: () => void): Promise<void> {
   const marker = poisonPath(snapshotPath);
   const file = await fs.open(marker, "wx", 0o600);
+  onCreated();
   try {
     await file.writeFile(
       "The previous Matrix crypto owner did not safely publish its final state. Inspect and repair before clearing this marker.\n",
@@ -251,8 +252,10 @@ export async function acquireMatrixCryptoStoreOwnership(
         setYieldHandler,
         armUnsafeState: async () => {
           if (!unsafeStateArmed) {
-            await poisonMatrixCryptoStore(snapshotPath);
-            unsafeStateArmed = true;
+            await poisonMatrixCryptoStore(snapshotPath, () => {
+              // Creation belongs to this owner even if subsequent durability work fails.
+              unsafeStateArmed = true;
+            });
           }
         },
         clearUnsafeState: async () => {

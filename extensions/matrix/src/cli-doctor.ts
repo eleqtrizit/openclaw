@@ -10,6 +10,10 @@ import { getMatrixRuntime } from "./runtime.js";
 import { sanitizeMatrixPathSegment } from "./storage-paths.js";
 
 export function registerMatrixDoctorCommands(root: Command): void {
+  const accountForRoot = (rootDir: string, stateDir: string) =>
+    rootDir === path.resolve(stateDir, "matrix")
+      ? "default"
+      : path.basename(path.dirname(path.dirname(rootDir)));
   const doctor = root
     .command("doctor")
     .description("Inspect and recover Matrix crypto storage refusal");
@@ -21,7 +25,7 @@ export function registerMatrixDoctorCommands(root: Command): void {
       const stateDir = getMatrixRuntime().state.resolveStateDir(process.env, os.homedir);
       const roots = await listMatrixCryptoUnsafeState(stateDir);
       const accounts = roots.map((rootDir) => ({
-        account: path.basename(path.dirname(path.dirname(rootDir))),
+        account: accountForRoot(rootDir, stateDir),
         rootDir,
       }));
       if (options.json) {
@@ -49,7 +53,7 @@ export function registerMatrixDoctorCommands(root: Command): void {
       const stateDir = getMatrixRuntime().state.resolveStateDir(process.env, os.homedir);
       const account = sanitizeMatrixPathSegment(normalizeAccountId(options.account));
       const roots = (await listMatrixCryptoUnsafeState(stateDir)).filter(
-        (rootDir) => path.basename(path.dirname(path.dirname(rootDir))) === account,
+        (rootDir) => accountForRoot(rootDir, stateDir) === account,
       );
       if (roots.length !== 1) {
         throw new Error(

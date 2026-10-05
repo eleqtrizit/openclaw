@@ -6,6 +6,7 @@ import path from "node:path";
 import { toErrorObject } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { resetFileLockStateForTest } from "openclaw/plugin-sdk/file-lock";
+import type { OpenAsyncKeyedStoreOptions } from "openclaw/plugin-sdk/plugin-state-runtime";
 import {
   createPluginStateKeyedStoreForTests,
   openOpenClawStateDatabase,
@@ -18,9 +19,8 @@ import { installMatrixTestRuntime } from "../../test-runtime.js";
 import {
   openMatrixIdbSnapshotStoreOptions,
   readMatrixIdbSnapshotJson,
-  readMatrixIdbSnapshotJsonFromStore,
   writeMatrixIdbSnapshotJson,
-  type MatrixIdbSnapshotRecord,
+  type MatrixSnapshotStateRuntime,
 } from "../crypto-state-store.js";
 import { acquireMatrixCryptoStoreOwnership } from "./crypto-store-ownership.js";
 import { observeCryptoStoreWaiter } from "./crypto-store-ownership.test-helpers.js";
@@ -137,6 +137,28 @@ describe("Matrix IndexedDB persistence", () => {
     expect(dbs.map((entry) => entry.name)).not.toContain(otherCryptoDatabaseName);
   });
 
+  it.each(["[]", "{}", "null", "", "{"])(
+    "refuses invalid canonical snapshot %j without deleting retained crypto keys",
+    async (snapshotJson) => {
+      const snapshotPath = path.join(tmpDir, "crypto-idb-snapshot.json");
+      const records = [{ key: "room-1", value: { session: "retained-key" } }];
+      await seedDatabase({ name: cryptoDatabaseName, storeName: "sessions", records });
+      await writeMatrixIdbSnapshotJson({
+        storageRootDir: tmpDir,
+        snapshotJson,
+        databaseCount: 1,
+      });
+
+      await expect(
+        restoreIdbFromDisk(snapshotPath, getMatrixRuntime().state, DATABASE_PREFIX),
+      ).rejects.toThrow();
+      expect(
+        await readDatabaseRecords({ name: cryptoDatabaseName, storeName: "sessions" }),
+      ).toEqual(records);
+      expect(await readMatrixIdbSnapshotJson(tmpDir)).toBe(snapshotJson);
+    },
+  );
+
   it("replaces stale in-memory crypto records when ownership returns", async () => {
     const snapshotPath = path.join(tmpDir, "crypto-idb-snapshot.json");
     await seedDatabase({
@@ -222,7 +244,9 @@ describe("Matrix IndexedDB persistence", () => {
       ]),
     });
 
-    await expect(restoreIdbFromDisk(snapshotPath)).resolves.toBe(false);
+    await expect(restoreIdbFromDisk(snapshotPath)).rejects.toMatchObject({
+      name: "ConstraintError",
+    });
     expect(warnSpy).toHaveBeenCalledWith(
       "IdbPersistence",
       "Failed to restore IndexedDB snapshot from SQLite:",
@@ -251,15 +275,18 @@ describe("Matrix IndexedDB persistence", () => {
         records: Array.from({ length: 24 }, (_, index) => `${index}:🦞${"x".repeat(15_000)}`),
       });
       await writeMatrixIdbSnapshotJson({ storageRootDir: tmpDir, snapshotJson, databaseCount: 1 });
-      const store = createPluginStateKeyedStoreForTests<MatrixIdbSnapshotRecord>(
+      const store = createPluginStateKeyedStoreForTests<Record<string, unknown>>(
         "matrix",
         openMatrixIdbSnapshotStoreOptions(tmpDir),
       );
-      const reader = mode === "bulk" ? store : { lookup: (key: string) => store.lookup(key) };
+      const stateRuntime: MatrixSnapshotStateRuntime = {
+        openKeyedStore<T>(options: OpenAsyncKeyedStoreOptions) {
+          const reader = createPluginStateKeyedStoreForTests<T>("matrix", options);
+          return mode === "bulk" ? reader : { ...reader, lookupMany: undefined };
+        },
+      };
       expect(await readMatrixIdbSnapshotJson(tmpDir)).toBe(snapshotJson);
-      await expect(readMatrixIdbSnapshotJsonFromStore({ store: reader })).resolves.toBe(
-        snapshotJson,
-      );
+      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).resolves.toBe(snapshotJson);
       const chunk = (await store.entries()).find(
         (row) => row.value.kind === "snapshot-chunk" && row.value.index === 10,
       );
@@ -268,7 +295,7 @@ describe("Matrix IndexedDB persistence", () => {
         throw new Error("expected snapshot chunk 10");
       }
       await store.register(chunk.key, { ...chunk.value, data: "modified" });
-      await expect(readMatrixIdbSnapshotJsonFromStore({ store: reader })).resolves.toBeNull();
+      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).resolves.toBeNull();
       const laterChunk = (await store.entries()).find(
         (row) => row.value.kind === "snapshot-chunk" && row.value.index === 11,
       );
@@ -284,72 +311,88 @@ describe("Matrix IndexedDB persistence", () => {
       );
       await store.register(chunk.key, { ...chunk.value, index: -1 });
       expect(await readMatrixIdbSnapshotJson(tmpDir)).toBeNull();
-      await expect(readMatrixIdbSnapshotJsonFromStore({ store: reader })).resolves.toBeNull();
+      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).resolves.toBeNull();
       await store.delete(chunk.key);
       expect(await readMatrixIdbSnapshotJson(tmpDir)).toBeNull();
-      await expect(readMatrixIdbSnapshotJsonFromStore({ store: reader })).resolves.toBeNull();
+      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).resolves.toBeNull();
       await store.register(chunk.key, chunk.value);
       await expect(readMatrixIdbSnapshotJson(tmpDir)).rejects.toMatchObject(
         expect.objectContaining({ code: "PLUGIN_STATE_CORRUPT" }),
       );
-      await expect(readMatrixIdbSnapshotJsonFromStore({ store: reader })).rejects.toMatchObject({
+      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).rejects.toMatchObject({
         code: "PLUGIN_STATE_CORRUPT",
       });
     },
   );
 
-  it("blocks runtime restore and persistence until doctor migrates the legacy snapshot", async () => {
-    const snapshotPath = path.join(tmpDir, "crypto-idb-snapshot.json");
-    const snapshot = JSON.stringify([{ name: cryptoDatabaseName, version: 1, stores: [] }]);
-    fs.writeFileSync(snapshotPath, snapshot);
+  it.each(["absent", "valid", "malformed"] as const)(
+    "refuses retired snapshot JSON when canonical SQLite state is %s",
+    async (canonicalState) => {
+      const snapshotPath = path.join(tmpDir, "crypto-idb-snapshot.json");
+      const snapshot = JSON.stringify([{ name: cryptoDatabaseName, version: 1, stores: [] }]);
+      const canonicalSnapshot =
+        canonicalState === "absent"
+          ? null
+          : canonicalState === "valid"
+            ? JSON.stringify([{ name: otherCryptoDatabaseName, version: 1, stores: [] }])
+            : JSON.stringify({ malformed: true });
+      if (canonicalSnapshot !== null) {
+        await writeMatrixIdbSnapshotJson({
+          storageRootDir: tmpDir,
+          snapshotJson: canonicalSnapshot,
+          databaseCount: 1,
+        });
+      }
+      fs.writeFileSync(snapshotPath, snapshot);
+      const remediation =
+        'Install OpenClaw 2026.9.5, run "openclaw doctor --fix", and start the Matrix channel once to migrate it, then upgrade to latest.';
 
-    await expect(restoreIdbFromDisk(snapshotPath)).rejects.toMatchObject({
-      name: "MatrixIdbSnapshotMigrationRequiredError",
-      code: "matrix-idb-snapshot-requires-doctor",
-      remediation: "openclaw doctor --fix",
-    });
-    expect(warnSpy).toHaveBeenCalledWith(
-      "IdbPersistence",
-      expect.objectContaining({
-        code: "matrix-idb-snapshot-requires-doctor",
-        remediation: "openclaw doctor --fix",
-      }),
-    );
-    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(snapshotPath);
-
-    await seedDatabase({
-      name: cryptoDatabaseName,
-      storeName: "sessions",
-      records: [{ key: "new-room", value: { session: "new" } }],
-    });
-    await expect(
-      persistIdbToDisk({ snapshotPath, databasePrefix: DATABASE_PREFIX }),
-    ).rejects.toMatchObject({
-      code: "matrix-idb-snapshot-requires-doctor",
-    });
-    expect(await readMatrixIdbSnapshotJson(tmpDir)).toBeNull();
-    expect(fs.existsSync(snapshotPath)).toBe(true);
-
-    await writeMatrixIdbSnapshotJson({
-      storageRootDir: tmpDir,
-      snapshotJson: JSON.stringify({ malformed: true }),
-      databaseCount: 1,
-    });
-    await expect(restoreIdbFromDisk(snapshotPath)).rejects.toMatchObject({
-      code: "matrix-idb-snapshot-requires-doctor",
-    });
-    const storeSpy = vi.spyOn(getMatrixRuntime().state, "openKeyedStore").mockImplementation(() => {
-      throw new Error("sqlite unavailable");
-    });
-
-    try {
       await expect(restoreIdbFromDisk(snapshotPath)).rejects.toMatchObject({
+        name: "MatrixIdbSnapshotMigrationRequiredError",
         code: "matrix-idb-snapshot-requires-doctor",
+        remediation,
       });
-    } finally {
-      storeSpy.mockRestore();
-    }
-  });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "IdbPersistence",
+        expect.objectContaining({
+          code: "matrix-idb-snapshot-requires-doctor",
+          remediation,
+        }),
+      );
+      expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(snapshotPath);
+      const databaseNames = (await indexedDB.databases()).map((database) => database.name);
+      expect(databaseNames).not.toContain(cryptoDatabaseName);
+      expect(databaseNames).not.toContain(otherCryptoDatabaseName);
+
+      await seedDatabase({
+        name: cryptoDatabaseName,
+        storeName: "sessions",
+        records: [{ key: "new-room", value: { session: "new" } }],
+      });
+      await expect(
+        persistIdbToDisk({ snapshotPath, databasePrefix: DATABASE_PREFIX }),
+      ).rejects.toMatchObject({
+        code: "matrix-idb-snapshot-requires-doctor",
+        remediation,
+      });
+      expect(await readMatrixIdbSnapshotJson(tmpDir)).toBe(canonicalSnapshot);
+      expect(fs.readFileSync(snapshotPath, "utf8")).toBe(snapshot);
+
+      const storeSpy = vi
+        .spyOn(getMatrixRuntime().state, "openKeyedStore")
+        .mockImplementation(() => {
+          throw new Error("sqlite unavailable");
+        });
+      try {
+        await expect(restoreIdbFromDisk(snapshotPath)).rejects.toMatchObject({
+          code: "matrix-idb-snapshot-requires-doctor",
+          remediation,
+        });
+      } finally {
+        storeSpy.mockRestore();
+      }
+    },
+  );
 
   it("returns false without warning when the snapshot does not exist yet", async () => {
     const restored = await restoreIdbFromDisk(path.join(tmpDir, "crypto-idb-snapshot.json"));
