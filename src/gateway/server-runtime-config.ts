@@ -1,5 +1,3 @@
-// Gateway startup runtime-config resolver.
-// Normalizes bind/auth/HTTP/Tailscale/hook settings before server construction.
 import { resolveControlUiAllowedOrigins } from "../config/gateway-control-ui-origins.js";
 import type {
   GatewayAuthConfig,
@@ -7,6 +5,9 @@ import type {
   GatewayTailscaleConfig,
 } from "../config/types.gateway.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+// Gateway startup runtime-config resolver.
+// Normalizes bind/auth/HTTP/Tailscale/hook settings before server construction.
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   formatUnsafeGatewayTailscaleNoAuthMessage,
   isUnsafeGatewayTailscaleNoAuth,
@@ -19,7 +20,7 @@ import {
 import { normalizeControlUiBasePath } from "./control-ui-shared.js";
 import { warnLegacyOpenClawEnvVars } from "./env-deprecation.js";
 import { commitHookTransformMappingReload } from "./hooks-mapping.js";
-import { resolveHooksConfig } from "./hooks.js";
+import { resolveHooksConfig, UnresolvedHooksTokenError } from "./hooks.js";
 import {
   defaultGatewayBindMode,
   isLoopbackHost,
@@ -196,7 +197,20 @@ export async function resolveGatewayRuntimeConfig(params: {
     tailscaleMode,
   });
   const authMode: ResolvedGatewayAuth["mode"] = resolvedAuth.mode;
-  const hooksConfig = resolveHooksConfig(params.cfg);
+  let hooksConfig: ReturnType<typeof resolveHooksConfig>;
+  try {
+    hooksConfig = resolveHooksConfig(params.cfg);
+  } catch (err) {
+    // Startup has no previous hooks generation to preserve. Disable only this
+    // ingress; reload still rejects invalid candidates and keeps its active generation.
+    if (!(err instanceof UnresolvedHooksTokenError)) {
+      throw err;
+    }
+    hooksConfig = null;
+    createSubsystemLogger("gateway/hooks").warn(
+      `External hooks disabled at startup: ${err.message}. Gateway startup continues.`,
+    );
+  }
   const runtimeConfig = {
     bindHost,
     controlUiEnabled,

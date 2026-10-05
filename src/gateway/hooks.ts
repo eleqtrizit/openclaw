@@ -63,6 +63,15 @@ type HookSessionPolicyResolved = {
 
 export type HookSessionKeySource = "request" | "mapping-static" | "mapping-templated";
 
+export class UnresolvedHooksTokenError extends Error {
+  constructor() {
+    super(
+      "hooks.token has an unresolved environment reference; supply the configured secret or disable hooks",
+    );
+    this.name = "UnresolvedHooksTokenError";
+  }
+}
+
 export function resolveHooksConfig(cfg: OpenClawConfig): HooksConfigResolved | null {
   if (cfg.hooks?.enabled !== true) {
     return null;
@@ -76,9 +85,7 @@ export function resolveHooksConfig(cfg: OpenClawConfig): HooksConfigResolved | n
     hasUnresolvedConfigPath(cfg, "hooks.token") ||
     getAuthoredConfigSecretRef(cfg, "hooks.token")
   ) {
-    throw new Error(
-      "hooks.token has an unresolved environment reference; supply the configured secret or disable hooks",
-    );
+    throw new UnresolvedHooksTokenError();
   }
   const rawPath = normalizeOptionalString(cfg.hooks?.path) || DEFAULT_HOOKS_PATH;
   const withSlash = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
