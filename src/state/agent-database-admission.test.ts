@@ -1,3 +1,4 @@
+import { deepStrictEqual } from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import path from "node:path";
@@ -22,6 +23,7 @@ import {
   recordAgentDatabaseAdmissions,
 } from "./agent-database-admission.js";
 import { withAgentDatabaseStartupAdmission } from "./agent-database-startup.js";
+import { readAgentDeletionJournalStatusInDatabase } from "./agent-deletion-journal.read.js";
 import { OPENCLAW_AGENT_SCHEMA_VERSION } from "./openclaw-agent-db-contract.js";
 import {
   closeOpenClawAgentDatabasesForTest,
@@ -32,6 +34,10 @@ import {
   preflightOpenClawDatabaseSchemas,
 } from "./openclaw-database-preflight.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "./openclaw-state-db-contract.js";
+import {
+  withExistingOpenClawStateDatabaseReadOnly,
+  withOpenClawStateDatabaseReadSnapshot,
+} from "./openclaw-state-db-readonly.js";
 import { closeOpenClawStateDatabaseForTest } from "./openclaw-state-db.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -46,11 +52,11 @@ describe("agent database admission", () => {
     const env = { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-admission-mixed-") };
     const config: OpenClawConfig = {
       agents: {
-        entries: { main: { default: true }, worker: {} },
+        entries: { openclaw: {}, worker: {} },
         defaults: { systemAgent: { agentId: "worker" } },
       },
     };
-    const unavailablePath = openOpenClawAgentDatabase({ agentId: "main", env }).path;
+    const unavailablePath = openOpenClawAgentDatabase({ agentId: "openclaw", env }).path;
     const newerPath = openOpenClawAgentDatabase({ agentId: "worker", env }).path;
     closeOpenClawAgentDatabasesForTest();
     closeOpenClawStateDatabaseForTest();
@@ -76,7 +82,10 @@ describe("agent database admission", () => {
   it("keeps a secondary with malformed ownership isolated while required agents start", async () => {
     const env = { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-admission-ownerless-") };
     const config: OpenClawConfig = {
-      agents: { entries: { main: { default: true }, worker: {} } },
+      agents: {
+        entries: { main: {}, worker: {} },
+        defaults: { systemAgent: { agentId: "main" } },
+      },
     };
     openOpenClawAgentDatabase({ agentId: "main", env });
     const pathname = openOpenClawAgentDatabase({ agentId: "worker", env }).path;
@@ -95,7 +104,7 @@ describe("agent database admission", () => {
         reason: expect.stringContaining("no agent owner"),
       });
       expect(readAgentDatabaseAdmissionRefusal("main", { env })).toBeUndefined();
-      expect(fs.readFileSync(pathname)).toEqual(before);
+      deepStrictEqual(fs.readFileSync(pathname), before);
     });
   });
 
@@ -178,10 +187,74 @@ describe("agent database admission", () => {
     expect(inPreparation).toThrow("Agent database preparation has ended: main");
   });
 
+  it("settles deferred startup admission after its discovery snapshot closes", async () => {
+    const env = { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-deferred-admission-snapshot-") };
+    const agentId = "main";
+    const pathname = openOpenClawAgentDatabase({ agentId, env }).path;
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
+    await withAgentDatabaseStartupAdmission(async (admission) => {
+      const tracked = vi.spyOn(admission, "track");
+      const owner = admission.adopt();
+      try {
+        await withOpenClawStateDatabaseReadSnapshot(
+          async () => {
+            const refusals = admission.defer({
+              env,
+              inspections: [
+                {
+                  target: { agentId, path: pathname },
+                  result: Promise.resolve({ incompatible: [], indeterminate: [] }),
+                },
+              ],
+              reason: "Awaiting Gateway activation",
+            });
+            recordAgentDatabaseAdmissions(refusals, { env, source: "startup" });
+          },
+          { env },
+        );
+        expect(readAgentDatabaseAdmissionRefusal(agentId, { env })?.code).toBe(
+          "agent-database-inspection-pending",
+        );
+        const phases: string[] = [];
+        admission.activate({
+          isCurrent: () => true,
+          preparationReady: Promise.resolve(),
+          openAgent: async ({ assertCurrent }) => {
+            assertCurrent();
+            phases.push("open");
+          },
+          migrateAgent: async ({ assertCurrent }) => {
+            assertCurrent();
+            expect(
+              withExistingOpenClawStateDatabaseReadOnly(
+                ({ db }) => readAgentDeletionJournalStatusInDatabase(db, agentId),
+                { env },
+              ),
+            ).toBe("absent");
+            phases.push("migration");
+          },
+          publishAgent: async ({ assertCurrent }) => {
+            assertCurrent();
+            phases.push("publication");
+          },
+        });
+        // Join the owner's work on success or refusal, never a success-only callback.
+        await Promise.all(tracked.mock.calls.map(([work]) => work));
+        const refusal = readAgentDatabaseAdmissionRefusal(agentId, { env });
+        expect(refusal, refusal?.reason).toBeUndefined();
+        expect(phases).toEqual(["open", "migration", "publication"]);
+      } finally {
+        await owner.stop();
+        tracked.mockRestore();
+      }
+    });
+  });
+
   it.each([
     { role: "secondary", agentId: "cleaner", isolate: true },
     { role: "registered secondary", agentId: "cleaner", isolate: true },
-    { role: "default", agentId: "cleaner", isolate: false },
+    { role: "sole", agentId: "cleaner", isolate: false },
     { role: "configured system", agentId: "cleaner", isolate: false },
     { role: "reserved system", agentId: "openclaw", isolate: false },
     { role: "reserved system", agentId: "crestodian", isolate: false },
@@ -194,9 +267,8 @@ describe("agent database admission", () => {
       const config: OpenClawConfig = {
         agents: {
           entries: {
-            main: { default: role !== "default" },
+            ...(role === "sole" ? {} : { main: {} }),
             [agentId]: {
-              default: role === "default",
               sandbox: { mode: "all", workspaceAccess: "none", scope: "session" },
             },
           },
@@ -240,7 +312,7 @@ describe("agent database admission", () => {
           code: "agent-database-ownership-mismatch",
         }),
       );
-      expect(fs.readFileSync(target)).toEqual(copyBytes);
+      deepStrictEqual(fs.readFileSync(target), copyBytes);
       const startup = () =>
         assertOpenClawDatabasesReady({ env, operation: "gateway-startup", config });
       if (!isolate) {
@@ -255,7 +327,7 @@ describe("agent database admission", () => {
           },
         });
         expect(readAgentDatabaseAdmissionRefusal(agentId, { env })).toBeUndefined();
-        expect(fs.readFileSync(target)).toEqual(copyBytes);
+        deepStrictEqual(fs.readFileSync(target), copyBytes);
         return;
       }
       await expect(startup()).resolves.toBeUndefined();
@@ -294,13 +366,17 @@ describe("agent database admission", () => {
         status: "degraded",
         admissionRefusal: refusal,
       });
-      const { runStartupSessionMigration } =
-        await import("../gateway/server-startup-session-migration.js");
+      const { runStartupSessionMaintenanceForTest } =
+        await import("../gateway/server-startup-session-migration.test-support.js");
       const { assertConfiguredWorkspaceStateReady } =
         await import("../agents/workspace-state-dirs.js");
       await assertConfiguredWorkspaceStateReady({ cfg: config, env });
-      await runStartupSessionMigration({ cfg: config, env, log: { info: vi.fn(), warn: vi.fn() } });
-      expect(fs.readFileSync(target)).toEqual(copyBytes);
+      await runStartupSessionMaintenanceForTest({
+        cfg: config,
+        env,
+        log: { info: vi.fn(), warn: vi.fn() },
+      });
+      deepStrictEqual(fs.readFileSync(target), copyBytes);
       expect(() => openOpenClawAgentDatabase({ agentId, env })).toThrow(refusal?.reason);
       closeOpenClawAgentDatabasesForTest();
       closeOpenClawStateDatabaseForTest();
@@ -316,7 +392,7 @@ describe("agent database admission", () => {
         agentId,
       });
       expect(openOpenClawAgentDatabase({ agentId, env }).agentId).toBe(agentId);
-      expect(fs.readFileSync(`${target}.operator-backup`)).toEqual(copyBytes);
+      deepStrictEqual(fs.readFileSync(`${target}.operator-backup`), copyBytes);
     },
   );
 });

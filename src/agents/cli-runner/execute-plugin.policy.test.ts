@@ -245,6 +245,29 @@ describe("plugin-owned CLI native tool policy", () => {
     });
   });
 
+  it("rejects projected native Grep when OpenClaw owns read", async () => {
+    const hook = vi.fn(async () => undefined);
+    installBeforeToolCallHook(hook, ["read"]);
+    const { context } = await createExecution({
+      config: { tools: { allow: ["read"], exec: { security: "full", ask: "off" } } },
+      nativeTools: ["Grep"],
+      projectNativeToolAuthority: () => ["read"],
+    });
+    context.hostOwnedTools = ["read"];
+
+    await runPlugin(context, async function* (execution) {
+      await expect(
+        requestNativeTool(execution, "Grep", { pattern: "needle", path: "." }),
+      ).resolves.toEqual({
+        behavior: "deny",
+        message: "Use OpenClaw read; its native equivalent is unavailable.",
+      });
+      yield SUCCESS_RESULT;
+    });
+    expect(hook).not.toHaveBeenCalled();
+    expect(mockCallGatewayTool).not.toHaveBeenCalled();
+  });
+
   it("applies read deny policy to native Grep", async () => {
     const { context } = await createExecution({
       config: {

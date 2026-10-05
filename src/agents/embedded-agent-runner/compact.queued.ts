@@ -1,12 +1,7 @@
-/**
- * Queues embedded-agent session compaction onto the correct command lane.
- */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import {
-  loadSessionEntryReadOnly,
-  type SessionTranscriptRuntimeTarget,
-} from "../../config/sessions/session-accessor.js";
+import type { SessionTranscriptRuntimeTarget } from "../../config/sessions/session-accessor.js";
 import { projectPublicSessionEntry } from "../../config/sessions/session-entry-projection.js";
+import { readSessionEntryReadOnlyInWorker } from "../../config/sessions/session-entry-read-runtime.js";
 import { OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST } from "../../context-engine/host-compat.js";
 import { ensureContextEnginesInitialized } from "../../context-engine/init.js";
 import {
@@ -165,7 +160,11 @@ export async function compactEmbeddedAgentSession(
         : undefined;
     try {
       // Resolve the storage address first, then freeze its owner before runtime/plugin awaits.
-      const entry = loadSessionEntryReadOnly({ ...runtimeTarget, readConsistency: "latest" });
+      const entry = await readSessionEntryReadOnlyInWorker(
+        { ...runtimeTarget, readConsistency: "latest" },
+        () => assertQueuedCompactionPreparationActive(params, host),
+      );
+      assertQueuedCompactionPreparationActive(params, host);
       const expectedEntry = {
         sessionId: runtimeTarget.sessionId,
         lifecycleRevision: entry?.lifecycleRevision,
@@ -346,6 +345,7 @@ async function compactEmbeddedAgentSessionImpl(
     const preparedParams = {
       ...params,
       ...(placementSandbox ? { sandbox: placementSandbox } : {}),
+      memorySandboxed: (placementSandbox ?? params.sandbox)?.enabled === true,
       config: projectCodexHostTranscriptBytePreflightConfig(
         lease.snapshot.config,
         Boolean(host.transcriptBytePreflightHarness),
@@ -354,7 +354,7 @@ async function compactEmbeddedAgentSessionImpl(
     };
     const run = async () => {
       owner.captureContext();
-      ensureContextEnginesInitialized();
+      await ensureContextEnginesInitialized();
       const contextEngine = await owner.resolveEngine(() =>
         resolveContextEngine(preparedParams.config, {
           agentDir: preparedParams.agentDir,
@@ -442,8 +442,7 @@ async function compactResolvedContextEngine(
     preparedModelRuntime,
   });
   assertQueuedCompactionPreparationActive(params, host);
-  const { model: ceModel, authStorage, modelRegistry } = modelResolution;
-  const ceRuntimeModel = ceModel as ProviderRuntimeModel | undefined;
+  const { model: ceRuntimeModel, authStorage, modelRegistry } = modelResolution;
   // Overrides stay unset when no bound/planned/explicit harness resolved so auth-aware
   // selection can pick the credential-owning harness (codex for ChatGPT OAuth).
   const preparedAuth = await prepareCompactionHarnessAuth({
@@ -504,7 +503,7 @@ async function compactResolvedContextEngine(
         authProfileMode,
       });
       assertQueuedCompactionPreparationActive(params, host);
-      return { ...resolved, model: resolved.model as ProviderRuntimeModel | undefined };
+      return resolved;
     },
   });
   assertQueuedCompactionPreparationActive(params, host);
@@ -536,17 +535,29 @@ async function compactResolvedContextEngine(
     provider: ceContextConfigProvider,
     modelId: ceModelId,
     model: effectiveRuntimeModel,
-    agentId: runtimeTarget.agentId,
     requestedTokenBudget: params.contextTokenBudget,
   });
-  const contextEngineRuntimeContext = buildCompactionContextEngineRuntimeContext({
-    params: preparedParams,
-    agentDir,
-    harnessRuntime: preparedHarnessRuntime,
-    contextEngineSessionKey,
-    contextTokenBudget,
-    contextEnginePluginId: resolveContextEngineOwnerPluginId(contextEngine),
-  });
+  const { sessionFile: _sessionFile, contextEngineAgentId, ...runtimeParams } = preparedParams;
+  const contextEngineRuntimeContext: ContextEngineRuntimeContext = {
+    ...runtimeParams,
+    sessionTarget: projectQueuedCompactionSessionTarget(preparedParams),
+    ...buildEmbeddedCompactionRuntimeContext({
+      ...preparedParams,
+      agentDir,
+      modelId: preparedParams.model,
+      harnessRuntime: preparedHarnessRuntime,
+    }),
+    ...resolveContextEngineCapabilities({
+      config: preparedParams.config,
+      sessionKey: contextEngineSessionKey ?? preparedParams.sessionKey,
+      explicitAgentId: contextEngineAgentId,
+      authProfileId: preparedParams.authProfileId,
+      contextEnginePluginId: resolveContextEngineOwnerPluginId(contextEngine),
+      purpose: "context-engine.compaction",
+    }),
+    tokenBudget: contextTokenBudget,
+    currentTokenCount: preparedParams.currentTokenCount,
+  };
   const contextEngineRuntimeSettings = buildContextEngineRuntimeSettings({
     contextEngineHost: OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST,
     provider: ceProvider,
@@ -651,35 +662,4 @@ async function compactResolvedContextEngine(
     attemptNativeHarnessCompaction,
     transcriptBytePreflightAuthority,
   });
-}
-
-function buildCompactionContextEngineRuntimeContext(params: {
-  params: CompactEmbeddedAgentSessionParams;
-  agentDir: string;
-  contextEngineSessionKey?: string;
-  harnessRuntime?: string;
-  contextEnginePluginId?: string;
-  contextTokenBudget?: number;
-}): ContextEngineRuntimeContext {
-  const { sessionFile: _sessionFile, contextEngineAgentId, ...runtimeParams } = params.params;
-  return {
-    ...runtimeParams,
-    sessionTarget: projectQueuedCompactionSessionTarget(params.params),
-    ...buildEmbeddedCompactionRuntimeContext({
-      ...params.params,
-      agentDir: params.agentDir,
-      modelId: params.params.model,
-      harnessRuntime: params.harnessRuntime,
-    }),
-    ...resolveContextEngineCapabilities({
-      config: params.params.config,
-      sessionKey: params.contextEngineSessionKey ?? params.params.sessionKey,
-      explicitAgentId: contextEngineAgentId,
-      authProfileId: params.params.authProfileId,
-      contextEnginePluginId: params.contextEnginePluginId,
-      purpose: "context-engine.compaction",
-    }),
-    tokenBudget: params.contextTokenBudget,
-    currentTokenCount: params.params.currentTokenCount,
-  };
 }

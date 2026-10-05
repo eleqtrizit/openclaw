@@ -63,19 +63,8 @@ export function resolveGetReplyConfig(params: {
   return applyMergePatch(params.getRuntimeConfig(), configOverride) as OpenClawConfig;
 }
 
-export function shouldUseReplyFastTestBootstrap(params: {
-  isFastTestEnv: boolean;
-  configOverride?: OpenClawConfig;
-}): boolean {
-  return (
-    params.isFastTestEnv &&
-    isCompleteReplyConfig(params.configOverride) &&
-    !usesFullReplyRuntime(params.configOverride)
-  );
-}
-
 export function shouldUseReplyFastTestRuntime(params: {
-  cfg: OpenClawConfig;
+  cfg?: OpenClawConfig;
   isFastTestEnv: boolean;
 }): boolean {
   return (
@@ -83,13 +72,13 @@ export function shouldUseReplyFastTestRuntime(params: {
   );
 }
 
-export function initFastReplySessionState(params: {
+export async function initFastReplySessionState(params: {
   ctx: MsgContext;
   cfg: OpenClawConfig;
   agentId: string;
   commandAuthorized: boolean;
   workspaceDir: string;
-}): SessionInitResult {
+}): Promise<SessionInitResult> {
   const { ctx, cfg, agentId, commandAuthorized } = params;
   const sessionScope = cfg.session?.scope ?? "per-sender";
   const sessionKey =
@@ -102,7 +91,7 @@ export function initFastReplySessionState(params: {
     ctx.CommandTargetSessionKey,
     resolveSessionParentSessionKey(sessionKey),
   ].filter((key): key is string => typeof key === "string");
-  const snapshot = loadReplySessionInitializationSnapshot({
+  const snapshot = await loadReplySessionInitializationSnapshot({
     agentId,
     storePath,
     sessionKey,
@@ -156,10 +145,13 @@ export function initFastReplySessionState(params: {
       ? {
           previousSessionId: existingEntry.sessionId,
           spawnedBy: existingEntry.spawnedBy,
+          spawnedBySenderIsOwner: existingEntry.spawnedBySenderIsOwner,
+          spawnedBySessionId: existingEntry.spawnedBySessionId,
           spawnedWorkspaceDir: existingEntry.spawnedWorkspaceDir,
           spawnedCwd: existingEntry.spawnedCwd,
           parentSessionKey: existingEntry.parentSessionKey,
           parentSessionId: existingEntry.parentSessionId,
+          parentSessionLifecycleRevision: existingEntry.parentSessionLifecycleRevision,
           forkedFromParent: existingEntry.forkedFromParent,
           forkSource: existingEntry.forkSource,
           createdVia: existingEntry.createdVia,

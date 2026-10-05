@@ -71,6 +71,9 @@ const beginDoctorMaintenance = vi.hoisted(() =>
     signal: new AbortController().signal,
     run: <T>(operation: () => T): T => operation(),
     releaseState: vi.fn(async () => {}),
+    repairSqliteNoCow: vi.fn(async () => {}),
+    enableSqliteReclamation: vi.fn(async () => {}),
+    cleanupRetainedRuntimes: vi.fn(async () => {}),
     release: doctorMaintenanceRelease,
     finish: vi.fn(async () => {}),
   })),
@@ -249,9 +252,13 @@ vi.mock("./doctor/shared/legacy-config-issues.js", () => ({
   findDoctorLegacyConfigIssues,
 }));
 
+vi.mock("../plugins/plugin-metadata-snapshot.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../plugins/plugin-metadata-snapshot.js")>()),
+  completePluginMetadataSnapshot: ({ snapshot }: { snapshot?: PluginMetadataSnapshot }) => snapshot,
+}));
+
+// mock-isolation: Exercise migration ordering with fixture-owned metadata, without discovery.
 vi.mock("./doctor/shared/plugin-metadata-snapshot-scope.js", () => ({
-  completeDoctorPluginMetadataSnapshot: ({ snapshot }: { snapshot?: PluginMetadataSnapshot }) =>
-    snapshot,
   createDoctorPluginMetadataSnapshotScope: (params: {
     getBaseSnapshot: () => PluginMetadataSnapshot | undefined;
   }) => ({

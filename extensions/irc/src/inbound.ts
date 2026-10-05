@@ -1,7 +1,6 @@
-// Irc plugin module implements inbound behavior.
 import {
   logInboundDrop,
-  resolveChannelInboundRouteEnvelope,
+  createChannelInboundEnvelopeBuilderAsync,
 } from "openclaw/plugin-sdk/channel-inbound";
 import { channelIngressRoutes } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import {
@@ -9,12 +8,12 @@ import {
   resolveChannelStreamingBlockEnabled,
 } from "openclaw/plugin-sdk/channel-outbound";
 import { createChannelPairingController } from "openclaw/plugin-sdk/channel-pairing";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { isDangerousNameMatchingEnabled } from "openclaw/plugin-sdk/dangerous-name-runtime";
 import {
   deliverFormattedTextWithAttachments,
   type OutboundReplyPayload,
 } from "openclaw/plugin-sdk/reply-payload";
+import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
 import {
   GROUP_POLICY_BLOCKED_LABEL,
@@ -27,6 +26,7 @@ import {
   normalizeOptionalString,
   normalizeStringEntries,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { escapeRegExp } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { ResolvedIrcAccount } from "./accounts.js";
 import { createIrcIngressSubject, ircIngressIdentity } from "./ingress-identity.js";
 import type { IrcIngressDispatchResult, IrcIngressLifecycle } from "./irc-ingress.js";
@@ -40,7 +40,6 @@ import type { CoreConfig, IrcInboundMessage } from "./types.js";
 const CHANNEL_ID = "irc" as const;
 type IrcGroupPolicy = "open" | "allowlist" | "disabled";
 
-const escapeIrcRegexLiteral = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // IRC nicknames permit punctuation, so ASCII word boundaries lose valid leading/trailing chars.
 const IRC_NICK_CHARACTER = String.raw`[A-Za-z0-9_\-\[\]\\\x60^{}|~]`;
 const IRC_RFC1459_CASE_EQUIVALENTS = new Map([
@@ -58,8 +57,8 @@ function buildIrcNickMentionPattern(value: string): string {
   return Array.from(value, (character) => {
     const equivalent = IRC_RFC1459_CASE_EQUIVALENTS.get(character);
     return equivalent
-      ? `[${escapeIrcRegexLiteral(character)}${escapeIrcRegexLiteral(equivalent)}]`
-      : escapeIrcRegexLiteral(character);
+      ? `[${escapeRegExp(character)}${escapeRegExp(equivalent)}]`
+      : escapeRegExp(character);
   }).join("");
 }
 
@@ -188,11 +187,11 @@ export async function handleIrcInbound(params: {
   });
 
   const allowTextCommands = core.channel.commands.shouldHandleTextCommands({
-    cfg: config as OpenClawConfig,
+    cfg: config,
     surface: CHANNEL_ID,
   });
-  const hasControlCommand = core.channel.text.hasControlCommand(rawBody, config as OpenClawConfig);
-  const mentionRegexes = core.channel.mentions.buildMentionRegexes(config as OpenClawConfig);
+  const hasControlCommand = core.channel.text.hasControlCommand(rawBody, config);
+  const mentionRegexes = core.channel.mentions.buildMentionRegexes(config);
   const mentionNick = connectedNick?.trim() || account.nick;
   const explicitMentionRegex = mentionNick
     ? new RegExp(
@@ -221,8 +220,8 @@ export async function handleIrcInbound(params: {
       ? message.target
       : `#${message.target}`;
   const peerId = message.isGroup ? channelTarget : message.senderNick;
-  const { route, buildEnvelope } = resolveChannelInboundRouteEnvelope({
-    cfg: config as OpenClawConfig,
+  const route = resolveAgentRoute({
+    cfg: config,
     channel: CHANNEL_ID,
     accountId: account.accountId,
     peer: {
@@ -235,7 +234,7 @@ export async function handleIrcInbound(params: {
       channelId: CHANNEL_ID,
       accountId: account.accountId,
       identity: ircIngressIdentity,
-      cfg: config as OpenClawConfig,
+      cfg: config,
       readStoreAllowFrom: async () => await pairing.readAllowFromStore(),
     })
     .message({
@@ -347,6 +346,7 @@ export async function handleIrcInbound(params: {
   }
 
   const fromLabel = message.isGroup ? message.target : senderDisplay;
+  const buildEnvelope = await createChannelInboundEnvelopeBuilderAsync({ cfg: config, route });
   const body = buildEnvelope({
     channel: "IRC",
     from: fromLabel,
@@ -413,7 +413,7 @@ export async function handleIrcInbound(params: {
     : undefined;
 
   await core.channel.inbound.dispatch({
-    cfg: config as OpenClawConfig,
+    cfg: config,
     channel: CHANNEL_ID,
     accountId: account.accountId,
     route: { agentId: route.agentId, sessionKey: route.sessionKey },

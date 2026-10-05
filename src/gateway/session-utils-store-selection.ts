@@ -1,10 +1,11 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { isInternalSessionEffectsKey } from "../config/sessions/internal-session-key.js";
+import { canonicalSessionKeyMigrationRequiredError } from "../config/sessions/session-canonical-key.js";
 import type {
   CapturedSessionEntryReadSource,
   SessionEntryReadSource,
-} from "../config/sessions/session-accessor.types.js";
-import { canonicalSessionKeyMigrationRequiredError } from "../config/sessions/session-canonical-key.js";
+} from "../config/sessions/session-entry-read-source.types.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 
 export type GatewaySessionStoreLookup = {
@@ -16,6 +17,18 @@ export type GatewaySessionStoreLookup = {
   match: { entry: SessionEntry; key: string } | undefined;
   canonicalValidationError?: Error;
 };
+
+/** Ordinary Gateway lookups exclude rows reserved for suppressed run effects. */
+export function omitInternalSessionEffectsEntries(
+  store: Record<string, SessionEntry>,
+  storeKeys: readonly string[],
+): void {
+  for (const storeKey of storeKeys) {
+    if (isInternalSessionEffectsKey(storeKey)) {
+      delete store[storeKey];
+    }
+  }
+}
 
 export function findCanonicalStoreMatch<Entry extends SessionEntry>(
   store: Record<string, Entry>,

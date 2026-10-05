@@ -2,8 +2,8 @@ import {
   normalizeOptionalString,
   normalizeUniqueTrimmedStringList,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
-import type { CodexAppServerAuthRequirement } from "./auth-bridge.js";
 import type { resolveCodexAppServerAuthProfileIdForAgent } from "./auth-profile.js";
+import type { CodexAppServerAuthRequirement } from "./auth-types.js";
 import type { CodexAppServerStartOptions } from "./config.js";
 import { assertCodexModelListResponse } from "./protocol-validators.js";
 import type { CodexModel } from "./protocol.js";
@@ -45,7 +45,6 @@ type CodexAppServerListModelsOptions = {
   authRequirement?: CodexAppServerAuthRequirement;
   agentDir?: string;
   config?: Parameters<typeof resolveCodexAppServerAuthProfileIdForAgent>[0]["config"];
-  sharedClient?: boolean;
 };
 
 export async function listCodexAppServerModels(
@@ -88,19 +87,12 @@ async function withCodexAppServerModelRequest<T>(
     return await run(options.request);
   }
   const timeoutMs = options.timeoutMs ?? DEFAULT_MODEL_DISCOVERY_TIMEOUT_MS;
-  const useSharedClient = options.sharedClient !== false;
-  const {
-    createIsolatedCodexAppServerClient,
-    getLeasedSharedCodexAppServerClient,
-    releaseLeasedSharedCodexAppServerClient,
-  } = await import("./shared-client.js");
+  const { getLeasedSharedCodexAppServerClient, releaseLeasedSharedCodexAppServerClient } =
+    await import("./shared-client.js");
   const { requestCodexAppServerClientJson } = await import("./request.js");
-  const acquireClient = useSharedClient
-    ? getLeasedSharedCodexAppServerClient
-    : createIsolatedCodexAppServerClient;
   // Standalone listing retains the initialize diagnostic and per-page budget;
   // catalog/account callers supply their shared operation scope above.
-  const client = await acquireClient({
+  const client = await getLeasedSharedCodexAppServerClient({
     startOptions: options.startOptions,
     timeoutMs,
     authProfileId: options.authProfileId,
@@ -113,11 +105,7 @@ async function withCodexAppServerModelRequest<T>(
       requestCodexAppServerClientJson({ ...request, client, timeoutMs, config: options.config }),
     );
   } finally {
-    if (useSharedClient) {
-      releaseLeasedSharedCodexAppServerClient(client);
-    } else {
-      await client.closeAndWait();
-    }
+    releaseLeasedSharedCodexAppServerClient(client);
   }
 }
 
@@ -138,7 +126,7 @@ async function requestModelListPage(
 
 export function readModelListResult(value: unknown): CodexAppServerModelListResult {
   const response = assertCodexModelListResponse(value);
-  const models = response.data.map((entry) => readCodexModel(entry));
+  const models = response.data.map(readCodexModel);
   const nextCursor = response.nextCursor ?? undefined;
   return { models, ...(nextCursor ? { nextCursor } : {}) };
 }
@@ -151,15 +139,14 @@ function readCodexModel(value: CodexModel): CodexAppServerModel {
       "Invalid Codex app-server model/list response: model id and name must be non-empty strings",
     );
   }
+  const displayName = normalizeOptionalString(value.displayName);
+  const description = normalizeOptionalString(value.description);
+  const defaultReasoningEffort = normalizeOptionalString(value.defaultReasoningEffort);
   return {
     id,
     model,
-    ...(normalizeOptionalString(value.displayName)
-      ? { displayName: normalizeOptionalString(value.displayName) }
-      : {}),
-    ...(normalizeOptionalString(value.description)
-      ? { description: normalizeOptionalString(value.description) }
-      : {}),
+    ...(displayName ? { displayName } : {}),
+    ...(description ? { description } : {}),
     hidden: value.hidden,
     isDefault: value.isDefault,
     inputModalities: value.inputModalities,
@@ -169,9 +156,7 @@ function readCodexModel(value: CodexModel): CodexAppServerModel {
     supportedReasoningEfforts: normalizeUniqueTrimmedStringList(
       value.supportedReasoningEfforts.map((entry) => entry.reasoningEffort),
     ),
-    ...(normalizeOptionalString(value.defaultReasoningEffort)
-      ? { defaultReasoningEffort: normalizeOptionalString(value.defaultReasoningEffort) }
-      : {}),
+    ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
     ...(value.multiAgentVersion !== undefined
       ? { multiAgentVersion: value.multiAgentVersion }
       : {}),

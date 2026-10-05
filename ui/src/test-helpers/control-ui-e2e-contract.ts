@@ -33,7 +33,8 @@ type MockSessionsListResponse = { sessions: unknown[]; [field: string]: unknown 
 export type MockGatewayControls = {
   closeLatest: (code?: number, reason?: string) => Promise<void>;
   deliverLatest: (frame: unknown) => Promise<void>;
-  deferNext: (method: string, match?: Record<string, unknown>) => Promise<void>;
+  /** Returns the matching request count captured when deferral is armed. */
+  deferNext: (method: string, match?: Record<string, unknown>) => Promise<number>;
   emitChatFinal: (params: { runId: string; sessionKey?: string; text: string }) => Promise<void>;
   emitGatewayEvent: (event: string, payload?: unknown) => Promise<void>;
   getRequests: (method?: string, match?: Record<string, unknown>) => Promise<MockGatewayRequest[]>;
@@ -77,9 +78,11 @@ export type ControlUiMockRequestHandler = (request: {
 }) => void;
 
 export type ControlUiMockGateway = {
+  readonly online: boolean;
+  initialRosterDelivered: boolean;
   closeLatest: (code?: number, reason?: string) => void;
   deliverLatest: (frame: unknown) => void;
-  deferNext: (method: string, match?: Record<string, unknown>) => void;
+  deferNext: (method: string, match?: Record<string, unknown>) => number;
   emit: (event: string, payload?: unknown) => void;
   findRequests: (method?: string, match?: Record<string, unknown>) => MockGatewayRequest[];
   getSessionRow: (key: string) => ControlUiSessionFixture;
