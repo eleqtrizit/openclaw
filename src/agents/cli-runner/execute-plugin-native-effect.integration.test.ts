@@ -36,18 +36,43 @@ async function runNativeWrite(params: {
   relativePath?: boolean;
   useOutsideCwd?: boolean;
   nativeCwdSuffix?: string;
+  distinctPolicyWorkspace?: boolean;
+  targetPolicyWorkspace?: boolean;
+  rewriteToPolicyWorkspace?: boolean;
 }) {
   const root = await mkdtemp(path.join(os.tmpdir(), "openclaw-native-policy-proof-"));
   roots.push(root);
   const workspace = path.join(root, "workspace");
   await mkdir(workspace);
+  const policyWorkspace = path.join(root, "policy-workspace");
+  await mkdir(policyWorkspace);
+  const config = params.distinctPolicyWorkspace
+    ? {
+        ...params.config,
+        agents: {
+          entries: {
+            main: { workspace, tools: { profile: "full" as const } },
+            worker: {
+              workspace: policyWorkspace,
+              tools: { allow: ["write"], fs: { workspaceOnly: true } },
+            },
+          },
+        },
+      }
+    : params.config;
   const nativeCwd = params.useOutsideCwd
     ? path.join(root, "outside")
     : `${workspace}${params.nativeCwdSuffix ?? ""}`;
   await mkdir(nativeCwd, { recursive: true });
-  const target = path.join(nativeCwd, "native-effect.txt");
-  if (params.rewritePath) {
-    const rewritePath = params.rewritePath;
+  const target = path.join(
+    params.targetPolicyWorkspace ? policyWorkspace : nativeCwd,
+    "native-effect.txt",
+  );
+  const rewrittenTarget = params.rewriteToPolicyWorkspace
+    ? path.join(policyWorkspace, "rewritten-effect.txt")
+    : params.rewritePath;
+  if (rewrittenTarget) {
+    const rewritePath = rewrittenTarget;
     const handler: PluginHookHandlerMap["before_tool_call"] = async (event) => ({
       params: { ...event.params, path: rewritePath },
     });
@@ -62,12 +87,15 @@ async function runNativeWrite(params: {
     );
   }
   const { context } = await createExecution({
-    config: params.config,
+    config,
     nativeTools: ["Write"],
     workspaceDir: workspace,
   });
   context.params.modelProvider = params.modelProvider;
-  context.params.runtimePolicySessionKey = params.runtimePolicySessionKey;
+  context.params.runtimePolicySessionKey = params.distinctPolicyWorkspace
+    ? "agent:worker:main"
+    : params.runtimePolicySessionKey;
+  let nativeLaunches = 0;
   let decision: CliBackendToolPermissionResult | undefined;
   const input = {
     file_path: params.relativePath ? path.basename(target) : target,
@@ -84,6 +112,7 @@ async function runNativeWrite(params: {
     });
     if (decision.behavior === "allow") {
       const finalInput = decision.updatedInput ?? input;
+      nativeLaunches++;
       await execFileAsync(
         process.execPath,
         [
@@ -96,7 +125,16 @@ async function runNativeWrite(params: {
     }
     yield SUCCESS_RESULT;
   });
-  return { decision, exit, root, target, workspace };
+  return {
+    decision,
+    exit,
+    root,
+    target,
+    workspace,
+    policyWorkspace,
+    rewrittenTarget,
+    nativeLaunches,
+  };
 }
 
 async function expectMissing(filePath: string) {
@@ -104,6 +142,58 @@ async function expectMissing(filePath: string) {
 }
 
 describe("process-backed native CLI final-effect policy", () => {
+  it.each([
+    {
+      name: "admitted execution root",
+      targetPolicyWorkspace: false,
+      rewriteToPolicyWorkspace: false,
+      useOutsideCwd: false,
+      allowed: true,
+    },
+    {
+      name: "distinct policy root",
+      targetPolicyWorkspace: true,
+      rewriteToPolicyWorkspace: false,
+      useOutsideCwd: false,
+      allowed: false,
+    },
+    {
+      name: "outside sibling root",
+      targetPolicyWorkspace: false,
+      rewriteToPolicyWorkspace: false,
+      useOutsideCwd: true,
+      allowed: false,
+    },
+    {
+      name: "hook rewrite to policy root",
+      targetPolicyWorkspace: false,
+      rewriteToPolicyWorkspace: true,
+      useOutsideCwd: false,
+      allowed: false,
+    },
+  ])("observes mixed-agent Write final effects for $name", async (testCase) => {
+    // Characterize the current execution-root contract, not owner acceptance.
+    const proof = await runNativeWrite({
+      ...testCase,
+      distinctPolicyWorkspace: true,
+      config: { tools: { exec: { security: "full", ask: "off" } } },
+    });
+    expect(proof.workspace).not.toBe(proof.policyWorkspace);
+    expect(proof.nativeLaunches).toBe(testCase.allowed ? 1 : 0);
+    if (testCase.allowed) {
+      expect(proof.decision).toMatchObject({ behavior: "allow" });
+      expect(await readFile(proof.target, "utf8")).toBe("native effect\n");
+    } else {
+      expect(proof.decision).toEqual({
+        behavior: "deny",
+        message: expect.stringMatching(/^Path escapes sandbox root/),
+      });
+      await expectMissing(proof.target);
+    }
+    if (proof.rewrittenTarget) {
+      await expectMissing(proof.rewrittenTarget);
+    }
+  });
   it("allows a full-profile write and denies the same real effect after a restrictive upgrade", async () => {
     const allowed = await runNativeWrite({
       config: {
