@@ -29,10 +29,12 @@ export function createMatrixCryptoYieldHandlers(
 export async function closeMatrixCryptoStores(
   closeRecoveryKeys: () => Promise<void>,
   releaseOwnership: () => Promise<void>,
+  teardownComplete: boolean,
 ): Promise<void> {
   // Recovery-key writes belong to the owner session. Release only after close settles.
   const recovery = await Promise.allSettled([closeRecoveryKeys()]);
-  const release = await Promise.allSettled([releaseOwnership()]);
+  // Recovery must never acquire a store whose backend teardown is uncertain.
+  const release = teardownComplete ? await Promise.allSettled([releaseOwnership()]) : [];
   const failures = [...recovery, ...release]
     .filter((result) => result.status === "rejected")
     .map((result) => result.reason);
@@ -86,6 +88,74 @@ export function createMatrixCryptoInitializationGate() {
         if (pending === task) {
           pending = null;
         }
+      }
+    },
+  };
+}
+
+/** Quiescence failure forbids publication but still requires teardown under custody. */
+export async function runMatrixClientShutdown(params: {
+  persist: boolean;
+  quiesceSync: () => Promise<void>;
+  discardSync: () => void;
+  stop: (persist: boolean) => Promise<void>;
+  closeStores: () => Promise<void>;
+}): Promise<void> {
+  const failures: unknown[] = [];
+  let persist = params.persist;
+  try {
+    try {
+      await params.quiesceSync();
+    } catch (error) {
+      if (persist) {
+        failures.push(error);
+      }
+      persist = false;
+    }
+    if (!persist) {
+      params.discardSync();
+    }
+    await params.stop(persist);
+  } catch (error) {
+    failures.push(error);
+    params.discardSync();
+  } finally {
+    try {
+      await params.closeStores();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length === 1) {
+    throw failures[0];
+  }
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "Failed to shut down Matrix client generation");
+  }
+}
+
+/** SDK crypto stop is not retryable after throwing: it marks itself stopped before store closure. */
+export function createMatrixSdkStopGate() {
+  let stopped = false;
+  let failure: { error: unknown } | null = null;
+  return {
+    get stopped(): boolean {
+      return stopped || failure !== null;
+    },
+    stop(stopSdk: () => void): void {
+      if (stopped) {
+        return;
+      }
+      if (failure) {
+        throw failure.error;
+      }
+      try {
+        stopSdk();
+        stopped = true;
+      } catch (error) {
+        // A later SDK stop may silently skip unfinished closure. Keep custody until process exit.
+        failure = { error };
+        throw error;
       }
     },
   };

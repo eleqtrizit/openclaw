@@ -3,9 +3,14 @@ import path from "node:path";
 import { ClientEvent, type MatrixClient as MatrixJsClient } from "matrix-js-sdk/lib/matrix.js";
 import { SyncState } from "matrix-js-sdk/lib/sync.js";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import {
+  drainFileLockStateForTest,
+  resetFileLockStateForTest,
+} from "openclaw/plugin-sdk/file-lock";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MatrixClient } from "../sdk.js";
+import { withMatrixCryptoStoreRecoveryLock } from "./crypto-store-ownership.js";
 import { observeCryptoStoreWaiter } from "./crypto-store-ownership.test-helpers.js";
 import { persistIdbToDisk, restoreIdbFromDisk } from "./idb-persistence.js";
 
@@ -194,6 +199,108 @@ describe("Matrix encrypted startup ownership", () => {
       finish.resolve();
       await startup.catch(() => undefined);
       await Promise.allSettled([owner.stopWithoutPersist(), replacement.stopWithoutPersist()]);
+    }
+  });
+
+  it("retains custody through failed quiescence until pending crypto initialization is stopped", async () => {
+    const tempDir = tempDirs.make("matrix-quiesce-failure-");
+    const snapshotPath = path.join(tempDir, "snapshot.json");
+    const initStarted = createDeferred<void>();
+    const finishInit = createDeferred<void>();
+    const requestsAborted = createDeferred<void>();
+    const quiesceError = new Error("sync quiescence failed");
+    fixture.init.mockImplementation(async () => {
+      initStarted.resolve();
+      await finishInit.promise;
+    });
+    const owner = new MatrixClient("https://matrix.example.org", "test-token", {
+      userId: "@bot:example.org",
+      deviceId: "BOT",
+      encryption: true,
+      autoBootstrapCrypto: false,
+      cryptoDatabasePrefix: "openclaw-matrix-quiesce-failure-test",
+      idbSnapshotPath: snapshotPath,
+    });
+    vi.spyOn(owner, "quiesceSync").mockRejectedValue(quiesceError);
+    const abortRequests = owner.abortPendingRequests.bind(owner);
+    vi.spyOn(owner, "abortPendingRequests").mockImplementation(() => {
+      abortRequests();
+      requestsAborted.resolve();
+    });
+    const startup = owner.prepareForOneOff();
+    const startupSettled = Promise.allSettled([startup]);
+    let shutdown: Promise<void> | undefined;
+    try {
+      await initStarted.promise;
+      const savesBefore = vi.mocked(persistIdbToDisk).mock.calls.length;
+      shutdown = owner.stopAndPersist();
+      const shutdownSettled = Promise.allSettled([shutdown]);
+      await Promise.race([
+        requestsAborted.promise,
+        shutdown.then(
+          () => {
+            throw new Error("Shutdown released custody without canceling crypto work");
+          },
+          (error: unknown) => {
+            throw error;
+          },
+        ),
+      ]);
+      const inspect = vi.fn(async () => undefined);
+      await expect(withMatrixCryptoStoreRecoveryLock(snapshotPath, inspect)).rejects.toThrow();
+      expect(inspect).not.toHaveBeenCalled();
+      expect(fixture.stop).not.toHaveBeenCalled();
+      finishInit.resolve();
+      await expect(shutdown).rejects.toBe(quiesceError);
+      await shutdownSettled;
+      await withMatrixCryptoStoreRecoveryLock(snapshotPath, async (markerPath) => {
+        expect(fixture.stop).toHaveBeenCalledTimes(1);
+        expect(await fs.stat(markerPath)).toBeDefined();
+      });
+      expect(vi.mocked(persistIdbToDisk).mock.calls.length).toBe(savesBefore);
+    } finally {
+      finishInit.resolve();
+      await startupSettled;
+      await shutdown?.catch(() => undefined);
+      await owner.stopWithoutPersist().catch(() => undefined);
+    }
+  });
+
+  it("retains custody after SDK stop throws even when discard cleanup is requested", async () => {
+    const tempDir = tempDirs.make("matrix-sdk-stop-failure-");
+    const snapshotPath = path.join(tempDir, "snapshot.json");
+    const owner = new MatrixClient("https://matrix.example.org", "test-token", {
+      userId: "@bot:example.org",
+      deviceId: "BOT",
+      encryption: true,
+      autoBootstrapCrypto: false,
+      cryptoDatabasePrefix: "openclaw-matrix-sdk-stop-failure-test",
+      idbSnapshotPath: snapshotPath,
+    });
+    const stopError = new Error("SDK stop failed");
+    try {
+      await owner.prepareForOneOff();
+      const savesBefore = vi.mocked(persistIdbToDisk).mock.calls.length;
+      fixture.stop.mockImplementationOnce(() => {
+        throw stopError;
+      });
+      await expect(owner.stopAndPersist()).rejects.toBe(stopError);
+      await expect(owner.start()).rejects.toThrow("fully stopped");
+      const inspect = vi.fn(async () => undefined);
+      await expect(withMatrixCryptoStoreRecoveryLock(snapshotPath, inspect)).rejects.toThrow();
+      expect(inspect).not.toHaveBeenCalled();
+      expect(vi.mocked(persistIdbToDisk).mock.calls.length).toBe(savesBefore);
+      await expect(owner.stopWithoutPersist()).rejects.toBe(stopError);
+      expect(fixture.stop).toHaveBeenCalledTimes(1);
+      await expect(withMatrixCryptoStoreRecoveryLock(snapshotPath, inspect)).rejects.toThrow();
+      expect(inspect).not.toHaveBeenCalled();
+      expect(await fs.stat(`${snapshotPath}.owner.poisoned`)).toBeDefined();
+    } finally {
+      await owner.stopWithoutPersist().catch(() => undefined);
+      // Production retains this uncertain backend's lock until process exit.
+      // Retire only the test-owned lock manager after checking that behavior.
+      resetFileLockStateForTest();
+      await drainFileLockStateForTest();
     }
   });
 

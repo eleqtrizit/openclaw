@@ -31,7 +31,9 @@ import {
   closeMatrixCryptoStores,
   createMatrixCryptoInitializationGate,
   createMatrixCryptoYieldHandlers,
+  createMatrixSdkStopGate,
   persistMatrixFinalState,
+  runMatrixClientShutdown,
 } from "./crypto-store-lifecycle.js";
 import {
   acquireMatrixCryptoStoreOwnership,
@@ -131,7 +133,8 @@ export abstract class MatrixClientBase {
   private startupPromise: Promise<void> | null = null;
   private readonly cryptoInitializationGate = createMatrixCryptoInitializationGate();
   private readonly liveRoomReadinessOperations = new Set<Promise<() => void>>();
-  private sdkStopped = false;
+  private readonly sdkStopGate = createMatrixSdkStopGate();
+  private generationTeardownComplete = false;
   private stopDiscardPromise: Promise<void> | null = null;
   private idbPersistPromise: Promise<void> | null = null;
   private idbPersistAbortController: AbortController | null = null;
@@ -403,7 +406,7 @@ export abstract class MatrixClientBase {
     if (this.started) {
       return;
     }
-    if (this.sdkStopped) {
+    if (this.sdkStopGate.stopped) {
       throw new Error(
         "Matrix client has been fully stopped and cannot be restarted; acquire a new shared client generation",
       );
@@ -528,7 +531,7 @@ export abstract class MatrixClientBase {
       assertActive: () => {
         this.assertClientActive();
         opts.assertCurrent?.();
-        if (this.sdkStopped || this.syncQuiescePromise) {
+        if (this.sdkStopGate.stopped || this.syncQuiescePromise) {
           throw new Error("Matrix client is stopping; acquire a new client before sending");
         }
       },
@@ -551,17 +554,6 @@ export abstract class MatrixClientBase {
       return;
     }
     await this.startSyncSession({ bootstrapCrypto: false });
-  }
-
-  private stopSdkClient(): void {
-    if (this.sdkStopped) {
-      return;
-    }
-    this.currentSyncState = null;
-    this.currentSyncError = undefined;
-    this.sdkStopped = true;
-    this.client.stopClient();
-    this.started = false;
   }
 
   async quiesceSync(): Promise<void> {
@@ -596,53 +588,59 @@ export abstract class MatrixClientBase {
   }
 
   private async stopClientGeneration(persist: boolean): Promise<void> {
-    try {
-      if (persist) {
-        await this.quiesceSync();
-      } else {
-        await this.quiesceSync().catch(noop);
-        this.syncStore?.discardPendingSyncCursorPersistence();
-      }
-      this.abortPendingRequests();
-      // A one-off read can still be preparing crypto when its owner closes.
-      // Join that initialization before stopping the backend it may publish.
-      await this.startupPromise?.catch(noop);
-      await this.cryptoInitializationGate.pending?.catch(noop);
-      await Promise.allSettled(this.liveRoomReadinessOperations);
-      clearInterval(this.idbPersistTimer ?? undefined);
-      this.idbPersistTimer = null;
-      this.idbPersistAbortController?.abort();
-      const activePeriodicPersist = this.idbPersistPromise;
-      try {
-        this.stopSdkClient();
-        this.decryptBridge?.stop();
-      } finally {
-        this.cryptoRequestOwner.disable();
-      }
-      await Promise.all([this.recoveryKeyStore.close(), activePeriodicPersist]);
-      if (persist) {
-        await persistMatrixFinalState({
-          cryptoInitialized: this.cryptoInitialized,
-          ownership: this.cryptoStoreOwnership,
-          snapshotPath: this.idbSnapshotPath,
-          persistSnapshot: async () => {
-            const runtime = loadedMatrixCryptoRuntime ?? (await loadMatrixCryptoRuntime());
-            await runtime.persistIdbToDisk({
-              snapshotPath: this.idbSnapshotPath,
-              databasePrefix: this.cryptoDatabasePrefix,
-              strict: true,
-              stateRuntime: this.stateRuntime,
-            });
-          },
-          syncStore: this.syncStore,
-        });
-      }
-    } finally {
-      await closeMatrixCryptoStores(
-        () => this.recoveryKeyStore.close(),
-        () => this.releaseCryptoStoreOwnership(),
-      );
-    }
+    await runMatrixClientShutdown({
+      persist,
+      quiesceSync: () => this.quiesceSync(),
+      discardSync: () => this.syncStore?.discardPendingSyncCursorPersistence(),
+      stop: async (publishFinalState) => {
+        this.abortPendingRequests();
+        // A one-off read can still be preparing crypto when its owner closes.
+        // Join that initialization before stopping the backend it may publish.
+        await this.startupPromise?.catch(noop);
+        await this.cryptoInitializationGate.pending?.catch(noop);
+        await Promise.allSettled(this.liveRoomReadinessOperations);
+        clearInterval(this.idbPersistTimer ?? undefined);
+        this.idbPersistTimer = null;
+        this.idbPersistAbortController?.abort();
+        const activePeriodicPersist = this.idbPersistPromise;
+        try {
+          this.sdkStopGate.stop(() => {
+            this.currentSyncState = null;
+            this.currentSyncError = undefined;
+            this.client.stopClient();
+            this.started = false;
+          });
+        } finally {
+          this.decryptBridge?.stop();
+          this.cryptoRequestOwner.disable();
+        }
+        await Promise.all([this.recoveryKeyStore.close(), activePeriodicPersist]);
+        this.generationTeardownComplete = true;
+        if (publishFinalState) {
+          await persistMatrixFinalState({
+            cryptoInitialized: this.cryptoInitialized,
+            ownership: this.cryptoStoreOwnership,
+            snapshotPath: this.idbSnapshotPath,
+            persistSnapshot: async () => {
+              const runtime = loadedMatrixCryptoRuntime ?? (await loadMatrixCryptoRuntime());
+              await runtime.persistIdbToDisk({
+                snapshotPath: this.idbSnapshotPath,
+                databasePrefix: this.cryptoDatabasePrefix,
+                strict: true,
+                stateRuntime: this.stateRuntime,
+              });
+            },
+            syncStore: this.syncStore,
+          });
+        }
+      },
+      closeStores: () =>
+        closeMatrixCryptoStores(
+          () => this.recoveryKeyStore.close(),
+          () => this.releaseCryptoStoreOwnership(),
+          this.generationTeardownComplete,
+        ),
+    });
   }
 
   async stopAndPersist(): Promise<void> {
@@ -650,12 +648,12 @@ export abstract class MatrixClientBase {
   }
 
   stopWithoutPersist(): Promise<void> {
-    // Memoization closes concurrent callers; durable failure still requires discard cleanup.
+    // Retry only incomplete teardown; failed publication already closed the backend.
     if (!this.stopPersistPromise) {
       this.stopPersistPromise = this.stopDiscardPromise = this.stopClientGeneration(false);
     }
     return (this.stopDiscardPromise ??= this.stopPersistPromise.catch(() =>
-      this.stopClientGeneration(false),
+      this.generationTeardownComplete ? undefined : this.stopClientGeneration(false),
     ));
   }
 
