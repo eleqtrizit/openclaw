@@ -2,18 +2,18 @@ import crypto from "node:crypto";
 import type { EmbeddedAgentCompactResult } from "../../agents/embedded-agent-runner/types.js";
 import {
   type ExecPolicyOverrides,
+  prepareExecDefaults,
   resolveNodeExecEligibility,
+  resolvePreparedExecDefaultsAsync,
 } from "../../agents/exec-defaults.js";
 import type { SessionEntry } from "../../config/sessions.js";
-import {
-  loadSessionEntry,
-  patchSessionEntryCore,
-  updateSessionEntry,
-} from "../../config/sessions/session-accessor.js";
+import { patchSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { projectCompactionAccountingPatch } from "../../config/sessions/session-entry-projection.js";
+import { readSessionEntryInWorker } from "../../config/sessions/session-entry-read-runtime.js";
 import type { InternalSessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isFastTestRuntimeEnv } from "../../infra/env.js";
+import { loadExecApprovalsReadOnlyAsync } from "../../infra/exec-approvals-store.js";
 import { resolveSessionSkillExecutionWorkspace } from "../../skills/loading/workspace-skill-roots.js";
 import { getRemoteSkillEligibility } from "../../skills/runtime/remote.js";
 import { resolveReusableWorkspaceSkillSnapshot } from "../../skills/runtime/session-snapshot.js";
@@ -75,7 +75,7 @@ async function persistSkillSnapshot(params: {
     return { entry: nextEntry, updated: true };
   }
   let updated = false;
-  const persistedEntry = await updateSessionEntry(
+  const persistedEntry = await patchSessionEntryCore(
     {
       storePath: params.storePath,
       sessionKey: params.sessionKey,
@@ -86,6 +86,7 @@ async function persistSkillSnapshot(params: {
         entry.lifecycleRevision === params.expectedSession?.lifecycleRevision;
       return updated ? updates : null;
     },
+    { workerGuard: {} },
   );
   publishSessionEntry(params, persistedEntry ?? undefined);
   return { entry: persistedEntry ?? undefined, updated: Boolean(persistedEntry) && updated };
@@ -144,13 +145,18 @@ export async function ensureSkillSnapshot(params: {
     lifecycleRevision: nextEntry.lifecycleRevision,
   };
   let systemSent = sessionEntry?.systemSent ?? false;
-  const nodeSkillsEligibility = resolveNodeExecEligibility({
+  const execParams = {
     cfg,
     sessionEntry,
     sessionKey,
     agentId,
     execOverrides: params.execOverrides,
-  });
+  };
+  const execDefaults = await resolvePreparedExecDefaultsAsync(
+    prepareExecDefaults(execParams),
+    loadExecApprovalsReadOnlyAsync,
+  );
+  const nodeSkillsEligibility = resolveNodeExecEligibility(execParams, execDefaults);
   const existingSnapshot = nextEntry?.skillsSnapshot;
   const resolveSnapshot = (snapshot: SessionEntry["skillsSnapshot"]) =>
     resolveReusableWorkspaceSkillSnapshot({
@@ -239,7 +245,7 @@ export async function ensureSkillSnapshot(params: {
     // Even a reusable snapshot crosses an await. Return the current row so the
     // reply caller cannot restore stale metadata or a retired session generation.
     const current = storePath
-      ? loadSessionEntry({ storePath, sessionKey })
+      ? await readSessionEntryInWorker({ storePath, sessionKey })
       : sessionEntryHandle
         ? sessionEntryHandle.get(sessionKey)
         : sessionStore?.[sessionKey];
