@@ -7,8 +7,13 @@ import { resetPluginStateStoreForTests } from "openclaw/plugin-sdk/plugin-state-
 import { closeOpenClawStateDatabaseAsync } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerMatrixDoctorCommands } from "../cli-doctor.js";
+import { getMatrixRuntime } from "../runtime.js";
 import { installMatrixTestRuntime } from "../test-runtime.js";
-import { MATRIX_IDB_SNAPSHOT_FILENAME, writeMatrixIdbSnapshotJson } from "./crypto-state-store.js";
+import {
+  MATRIX_IDB_SNAPSHOT_FILENAME,
+  openMatrixIdbSnapshotStoreOptions,
+  writeMatrixIdbSnapshotJson,
+} from "./crypto-state-store.js";
 import {
   listMatrixCryptoUnsafeState,
   recoverMatrixCryptoUnsafeState,
@@ -121,6 +126,21 @@ describe("Matrix crypto unsafe-state Doctor", () => {
       snapshotJson: JSON.stringify([{ name: "crypto", version: 1, stores: [] }]),
       databaseCount: 1,
     });
+    const store = getMatrixRuntime().state.openKeyedStore<Record<string, unknown>>(
+      openMatrixIdbSnapshotStoreOptions(storageRootDir),
+    );
+    const meta = await store.lookup("current:meta");
+    if (!meta) {
+      throw new Error("Snapshot fixture has no metadata");
+    }
+    await store.register("current:meta", { ...meta, digest: "incorrect" });
+    const corruptRows = await store.entries();
+    await expect(
+      recoverMatrixCryptoUnsafeState({ storageRootDir, acceptSnapshotRollback: true }),
+    ).rejects.toMatchObject({ code: "matrix-idb-snapshot-invalid" });
+    expect(await fs.readFile(markerPath, "utf8")).toBe("unsafe\n");
+    expect(await store.entries()).toEqual(corruptRows);
+    await store.register("current:meta", meta);
     await recoverMatrixCryptoUnsafeState({ storageRootDir, acceptSnapshotRollback: true });
     expect(await listMatrixCryptoUnsafeState(stateDir)).toEqual([]);
     const owner = await acquireMatrixCryptoStoreOwnership(snapshotPath);

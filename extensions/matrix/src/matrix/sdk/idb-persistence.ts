@@ -247,12 +247,20 @@ export function resolveDefaultIdbSnapshotPath(): string {
   return path.join(stateDir, "matrix", "crypto-idb-snapshot.json");
 }
 
-async function readCanonicalSnapshotJson(
+async function readCanonicalSnapshot(
   snapshotPath: string,
   stateRuntime: MatrixSnapshotStateRuntime,
-): Promise<string | null> {
+): Promise<IdbDatabaseSnapshot[] | null> {
   throwIfLegacySnapshotNeedsDoctor(snapshotPath);
-  return await readMatrixIdbSnapshotJson(path.dirname(snapshotPath), stateRuntime);
+  const snapshotJson = await readMatrixIdbSnapshotJson(path.dirname(snapshotPath), stateRuntime);
+  if (snapshotJson === null) {
+    return null;
+  }
+  const snapshot = parseSnapshotPayload(snapshotJson);
+  if (!snapshot) {
+    throw new Error("Malformed IndexedDB snapshot payload");
+  }
+  return snapshot;
 }
 
 // Production callers pass MatrixStoragePaths.idbSnapshotPath; explicit paths only isolate tests.
@@ -268,17 +276,10 @@ export async function restoreIdbFromDisk(
     // withFileLock is acquire-or-throw; it never skips the callback on contention.
     return await withFileLock(resolvedPath, MATRIX_IDB_SNAPSHOT_LOCK_OPTIONS, async () => {
       callbackStarted = true;
-      const storedSnapshotJson = await readCanonicalSnapshotJson(
-        resolvedPath,
-        snapshotStateRuntime,
-      );
-      if (storedSnapshotJson === null) {
+      const snapshot = await readCanonicalSnapshot(resolvedPath, snapshotStateRuntime);
+      if (snapshot === null) {
         await clearAccountIndexedDatabases(databasePrefix);
         return false;
-      }
-      const snapshot = parseSnapshotPayload(storedSnapshotJson);
-      if (!snapshot) {
-        throw new Error("Malformed IndexedDB snapshot payload");
       }
       await clearAccountIndexedDatabases(databasePrefix);
       await restoreIndexedDatabases(snapshot);
@@ -320,7 +321,7 @@ export async function persistIdbToDisk(params?: {
       async () => {
         callbackStarted = true;
         const storageRootDir = path.dirname(snapshotPath);
-        await readCanonicalSnapshotJson(snapshotPath, stateRuntime);
+        await readCanonicalSnapshot(snapshotPath, stateRuntime);
         const snapshot = await dumpIndexedDatabases(params?.databasePrefix);
         if (params?.abortSignal?.aborted || snapshot.length === 0) {
           return 0;

@@ -155,7 +155,63 @@ describe("Matrix IndexedDB persistence", () => {
       expect(
         await readDatabaseRecords({ name: cryptoDatabaseName, storeName: "sessions" }),
       ).toEqual(records);
+      await expect(
+        persistIdbToDisk({ snapshotPath, databasePrefix: DATABASE_PREFIX, strict: true }),
+      ).rejects.toThrow();
       expect(await readMatrixIdbSnapshotJson(tmpDir)).toBe(snapshotJson);
+    },
+  );
+
+  it.each([
+    "metadata",
+    "null metadata",
+    "missing metadata",
+    "missing chunk",
+    "malformed chunk",
+    "digest",
+  ] as const)(
+    "refuses corrupt snapshot %s without deleting keys or replacing stored state",
+    async (corruption) => {
+      const snapshotPath = path.join(tmpDir, "crypto-idb-snapshot.json");
+      const records = [{ key: "room-1", value: { session: "retained-key" } }];
+      await seedDatabase({ name: cryptoDatabaseName, storeName: "sessions", records });
+      await persistIdbToDisk({ snapshotPath, databasePrefix: DATABASE_PREFIX, strict: true });
+      const store = createPluginStateKeyedStoreForTests<Record<string, unknown> | null>(
+        "matrix",
+        openMatrixIdbSnapshotStoreOptions(tmpDir),
+      );
+      const meta = await store.lookup("current:meta");
+      if (!meta || typeof meta.generation !== "string") {
+        throw new Error("expected published snapshot metadata");
+      }
+      const chunkKey = `current:snapshot:${meta.generation}:0`;
+      if (corruption === "missing metadata") {
+        await store.delete("current:meta");
+      } else if (corruption === "null metadata") {
+        await store.register("current:meta", null);
+      } else if (corruption === "missing chunk") {
+        await store.delete(chunkKey);
+      } else if (corruption === "malformed chunk") {
+        const chunk = await store.lookup(chunkKey);
+        await store.register(chunkKey, { ...chunk, index: -1 });
+      } else {
+        await store.register(
+          "current:meta",
+          corruption === "metadata" ? { ...meta, version: 0 } : { ...meta, digest: "incorrect" },
+        );
+      }
+      const storedRows = await store.entries();
+
+      await expect(
+        restoreIdbFromDisk(snapshotPath, getMatrixRuntime().state, DATABASE_PREFIX),
+      ).rejects.toThrow();
+      expect(
+        await readDatabaseRecords({ name: cryptoDatabaseName, storeName: "sessions" }),
+      ).toEqual(records);
+      await expect(
+        persistIdbToDisk({ snapshotPath, databasePrefix: DATABASE_PREFIX, strict: true }),
+      ).rejects.toThrow();
+      expect(await store.entries()).toEqual(storedRows);
     },
   );
 
@@ -295,13 +351,16 @@ describe("Matrix IndexedDB persistence", () => {
         throw new Error("expected snapshot chunk 10");
       }
       await store.register(chunk.key, { ...chunk.value, data: "modified" });
-      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).resolves.toBeNull();
+      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).rejects.toMatchObject({
+        code: "matrix-idb-snapshot-invalid",
+      });
       const laterChunk = (await store.entries()).find(
         (row) => row.value.kind === "snapshot-chunk" && row.value.index === 11,
       );
       if (!laterChunk) {
         throw new Error("expected snapshot chunk 11");
       }
+      await closeOpenClawStateDatabaseAsync();
       const { db } = openOpenClawStateDatabase({
         env: openMatrixIdbSnapshotStoreOptions(tmpDir).env,
       });
@@ -309,12 +368,21 @@ describe("Matrix IndexedDB persistence", () => {
         "invalid JSON",
         laterChunk.key,
       );
+      await closeOpenClawStateDatabaseAsync();
       await store.register(chunk.key, { ...chunk.value, index: -1 });
-      expect(await readMatrixIdbSnapshotJson(tmpDir)).toBeNull();
-      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).resolves.toBeNull();
+      await expect(readMatrixIdbSnapshotJson(tmpDir)).rejects.toMatchObject({
+        code: "matrix-idb-snapshot-invalid",
+      });
+      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).rejects.toMatchObject({
+        code: "matrix-idb-snapshot-invalid",
+      });
       await store.delete(chunk.key);
-      expect(await readMatrixIdbSnapshotJson(tmpDir)).toBeNull();
-      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).resolves.toBeNull();
+      await expect(readMatrixIdbSnapshotJson(tmpDir)).rejects.toMatchObject({
+        code: "matrix-idb-snapshot-invalid",
+      });
+      await expect(readMatrixIdbSnapshotJson(tmpDir, stateRuntime)).rejects.toMatchObject({
+        code: "matrix-idb-snapshot-invalid",
+      });
       await store.register(chunk.key, chunk.value);
       await expect(readMatrixIdbSnapshotJson(tmpDir)).rejects.toMatchObject(
         expect.objectContaining({ code: "PLUGIN_STATE_CORRUPT" }),
