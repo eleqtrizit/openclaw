@@ -64,6 +64,7 @@ function makeSandboxAdmissionParams(
   cfg: OpenClawConfig,
   workspaceDir: string,
   payload?: { model?: string; fallbacks?: string[] },
+  sessionKey = "existing-cron-session",
 ): RunCronAgentTurnParams {
   const mergedCfg: OpenClawConfig = {
     ...cfg,
@@ -96,7 +97,7 @@ function makeSandboxAdmissionParams(
       createdAtMs: 0,
       updatedAtMs: 0,
       schedule: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-      sessionTarget: "session:existing-cron-session",
+      sessionTarget: `session:${sessionKey}`,
       wakeMode: "now",
       payload: {
         kind: "agentTurn",
@@ -107,7 +108,7 @@ function makeSandboxAdmissionParams(
       state: {},
     },
     message: "summarize",
-    sessionKey: "existing-cron-session",
+    sessionKey,
   };
 }
 
@@ -316,5 +317,29 @@ describe("cron isolated-agent sandbox placement admission", () => {
     expect(fs.existsSync(markerPath)).toBe(true);
     expect(fs.readFileSync(markerPath, "utf8")).toContain("launched:");
     expect(runEmbeddedAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-main cron sessions under sandbox mode non-main while permitting main-session CLI execution", async () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: { sandbox: { mode: "non-main" }, subagents: { model: "test-cli/claude-x" } },
+      },
+    };
+    const nonMainResult = await runCronIsolatedAgentTurn(makeSandboxAdmissionParams(cfg, tempDir));
+
+    expect(nonMainResult.status).toBe("error");
+    expect(nonMainResult.error).toContain("cannot honor the sandbox");
+    expect(fs.existsSync(markerPath)).toBe(false);
+
+    resolveCronSessionMock.mockReturnValue(
+      makeCronSession({ sessionEntry: makeCronSessionEntry({ sessionId }), isNewSession: true }),
+    );
+    const mainResult = await runCronIsolatedAgentTurn(
+      makeSandboxAdmissionParams(cfg, tempDir, undefined, "agent:main:main"),
+    );
+
+    expect(mainResult.error).toBeUndefined();
+    expect(mainResult.status).toBe("ok");
+    expect(fs.existsSync(markerPath)).toBe(true);
   });
 });
