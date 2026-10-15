@@ -1,8 +1,5 @@
 import { AgentHarnessPreflightError } from "../../agents/harness/errors.js";
-import {
-  resolvePreparedSandboxRuntimeStatus,
-  type SandboxRuntimeStatusParams,
-} from "../../agents/sandbox/runtime-status.js";
+import { resolvePreparedSandboxRuntimeStatus } from "../../agents/sandbox/runtime-status.js";
 import type { CronRuntimeAuthority } from "../runtime-authority.js";
 
 export function assertCronRuntimeAuthorityCandidate(params: {
@@ -28,9 +25,9 @@ export type CronSandboxPlacement = {
 };
 
 /** Resolves the run's sandbox placement facts from the prepared session entry. */
-export function resolveCronSandboxPlacement(params: SandboxRuntimeStatusParams & {
-  preparedSessionEntry: SandboxRuntimeStatusParams["preparedSessionEntry"];
-}): CronSandboxPlacement {
+export function resolveCronSandboxPlacement(
+  params: Parameters<typeof resolvePreparedSandboxRuntimeStatus>[0],
+): CronSandboxPlacement {
   const status = resolvePreparedSandboxRuntimeStatus(params);
   return {
     sessionSandboxRequired: status.sandboxRequired,
@@ -47,10 +44,10 @@ export function resolveCronSandboxPlacement(params: SandboxRuntimeStatusParams &
  * session key) or carries required sandbox isolation (a creator-mandated
  * containment), admitting a CLI candidate would silently move tool execution
  * from the container to the host while `openclaw sandbox explain` still
- * reports the session as sandboxed. Fail closed instead of dispatching: pin
- * the model per agent (`agents.entries.<id>.subagents.model`) or per defaults
- * (`agents.defaults.subagents.model`) to an API-backed model, or change the
- * agent's sandbox policy explicitly.
+ * reports the session as sandboxed. Fail closed instead of dispatching: override
+ * `agents.entries.<id>.subagents.model`, `agents.defaults.subagents.model`, or
+ * the automation payload `model` to a sandbox-compatible runtime (clearing any
+ * pinned CLI runtime override), or change the agent's sandbox policy explicitly.
  */
 export function assertCronCandidateSandboxPlacement(params: {
   sessionSandboxRequired?: boolean | undefined;
@@ -61,13 +58,13 @@ export function assertCronCandidateSandboxPlacement(params: {
   if (!params.cliExecution) {
     return;
   }
-  // Unclasstrained sessions keep CLI execution: the sandbox classification
+  // Unsandboxed sessions keep CLI execution: the sandbox classification
   // already folds the configured mode ("all", or "non-main" away from the
   // agent's main session) into the sessionSandboxed fact for this key.
   if (!params.sessionSandboxed && !params.sessionSandboxRequired) {
     return;
   }
   throw new AgentHarnessPreflightError(
-    `This automation belongs to a sandboxed session, but resolved execution provider ${params.executionProvider} runs on the host and cannot honor the sandbox. Pin the automation to a sandbox-compatible model (e.g. set agents.entries.<id>.subagents.model or the agent's own model to an API-backed provider), or change the agent's sandbox policy explicitly.`,
+    `This automation belongs to a sandboxed session, but resolved execution provider ${params.executionProvider} runs on the host and cannot honor the sandbox. Override agents.entries.<id>.subagents.model, agents.defaults.subagents.model, or the automation payload model with an API-backed provider (and clear any pinned CLI runtime override), or change the agent's sandbox policy explicitly.`,
   );
 }
