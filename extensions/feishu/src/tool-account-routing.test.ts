@@ -80,6 +80,36 @@ function createMixedCaseConfig(params: {
   } as OpenClawPluginApi["config"];
 }
 
+function createPunctuationConfig(params: {
+  topTools?: FeishuToolsConfig;
+  toolsSales: FeishuToolsConfig;
+  salesEnabled?: boolean;
+}): OpenClawPluginApi["config"] {
+  return {
+    channels: {
+      feishu: {
+        enabled: true,
+        appId: "app-root",
+        appSecret: "sec-root", // pragma: allowlist secret
+        tools: params.topTools,
+        accounts: {
+          "sales.eu": {
+            enabled: params.salesEnabled ?? true,
+            appId: "app-sales",
+            appSecret: "sec-sales", // pragma: allowlist secret
+            tools: params.toolsSales,
+          },
+          sibling: {
+            appId: "app-sibling",
+            appSecret: "sec-sibling", // pragma: allowlist secret
+            tools: { perm: true },
+          },
+        },
+      },
+    },
+  } as OpenClawPluginApi["config"];
+}
+
 function resolveAccountTool(
   family: "wiki" | "drive" | "perm" | "bitable",
   config: Parameters<typeof createConfig>[0],
@@ -360,6 +390,72 @@ describe("feishu tool account routing", () => {
 
     expect(createFeishuClientMock).not.toHaveBeenCalled();
     expect(result.details.error).toBe('Feishu Perm tools are disabled for account "a"');
+  });
+
+  test("perm tool rejects a punctuation-key contextual account before sibling fallback", async () => {
+    const { api, resolveTool } = createToolFactoryHarness(
+      createPunctuationConfig({ topTools: { perm: true }, toolsSales: { perm: false } }),
+    );
+    registerFeishuPermTools(api);
+
+    const tool = resolveTool("feishu_perm", { agentAccountId: "sales-eu" });
+    const result = await tool.execute("call", { action: "list", token: "tok", type: "file" });
+
+    expect(createFeishuClientMock).not.toHaveBeenCalled();
+    expect(result.details.error).toBe('Feishu Perm tools are disabled for account "sales-eu"');
+  });
+
+  test("perm tool routes a punctuation-key contextual account with its own credentials", async () => {
+    const { api, resolveTool } = createToolFactoryHarness(
+      createPunctuationConfig({ topTools: { perm: true }, toolsSales: { perm: true } }),
+    );
+    registerFeishuPermTools(api);
+
+    const tool = resolveTool("feishu_perm", { agentAccountId: "sales-eu" });
+    await tool.execute("call", { action: "list", token: "tok", type: "file" });
+
+    expect(clientAppIdAt(0)).toBe("app-sales");
+    expect(clientAppIdAt(0)).not.toBe("app-root");
+  });
+
+  test("perm tool rejects an explicit alias for a punctuation-key disabled family", async () => {
+    const { api, resolveTool } = createToolFactoryHarness(
+      createPunctuationConfig({ topTools: { perm: true }, toolsSales: { perm: false } }),
+    );
+    registerFeishuPermTools(api);
+
+    const tool = resolveTool("feishu_perm", { agentAccountId: "sibling" });
+    const result = await tool.execute("call", {
+      action: "list",
+      token: "tok",
+      type: "file",
+      accountId: "sales.eu",
+    });
+
+    expect(createFeishuClientMock).not.toHaveBeenCalled();
+    expect(result.details.error).toBe('Feishu Perm tools are disabled for account "sales-eu"');
+  });
+
+  test("perm tool rejects an explicit alias for a disabled punctuation-key account", async () => {
+    const { api, resolveTool } = createToolFactoryHarness(
+      createPunctuationConfig({
+        topTools: { perm: true },
+        toolsSales: { perm: true },
+        salesEnabled: false,
+      }),
+    );
+    registerFeishuPermTools(api);
+
+    const tool = resolveTool("feishu_perm", { agentAccountId: "sibling" });
+    const result = await tool.execute("call", {
+      action: "list",
+      token: "tok",
+      type: "file",
+      accountId: "sales.eu",
+    });
+
+    expect(createFeishuClientMock).not.toHaveBeenCalled();
+    expect(result.details.error).toBe('Feishu account "sales.eu" is disabled');
   });
 
   test("bitable tool rejects a disabled contextual account when another account enables it", async () => {
