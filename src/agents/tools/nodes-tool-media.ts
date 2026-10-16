@@ -253,6 +253,9 @@ export async function executeNodeMediaAction(input: {
         height: payload.height,
         media: {
           mediaUrl: written.path,
+          // Inspected screenshots stay private; the FILE: path in the result
+          // text supports explicit sharing when the user asks.
+          outbound: false,
         },
       });
     }
@@ -322,11 +325,22 @@ async function createNodePhotoResult(params: {
   if (details.length === 0) {
     content.push({ type: "text", text: "No photos found." });
   }
+  // The inspected photos stay private: they are not attached or sent to the
+  // user unless the model explicitly shares a saved path.
+  if (details.length > 0) {
+    content.push({
+      type: "text",
+      text: `Photo${details.length === 1 ? "" : "s"} loaded into private model context for inspection; not attached or sent to the user. Saved to ${details.map((entry) => JSON.stringify(entry.path)).join(", ")}. Share explicitly only when the user asks.`,
+    });
+  }
   const mediaUrls = details.map((entry) => entry.path);
   return await sanitizeToolResultImages(
     {
       content,
-      details: details.length > 0 ? { [params.kind]: details, media: { mediaUrls } } : [],
+      details:
+        details.length > 0
+          ? { [params.kind]: details, media: { mediaUrls, outbound: false } }
+          : [],
     },
     params.kind === "snaps" ? "nodes:camera_snap" : "nodes:photos_latest",
     params.imageSanitization,
