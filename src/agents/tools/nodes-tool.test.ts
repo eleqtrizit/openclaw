@@ -577,9 +577,38 @@ describe("createNodesTool screen_record duration guardrails", () => {
 
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain("MEDIA:");
-    // Model-visible text must carry the saved path so vision models can still
-    // share explicitly; media details must opt out of outbound delivery.
-    expect(JSON.stringify(result?.content ?? [])).toContain("/tmp/camera.jpg");
+    // When image sanitization omits the dummy base64 block, the result text
+    // still carries the saved path without claiming images were loaded.
+    const texts = (result?.content ?? [])
+      .filter((block): block is { type: "text"; text: string } => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+    expect(texts).toContain('Photo saved to "/tmp/camera.jpg"; not attached or sent to the user.');
+    expect(texts).not.toContain("loaded into private model context");
+    expect(result?.details?.media).toMatchObject({ outbound: false });
+    expect(extractToolResultMediaArtifact(result)).toBeUndefined();
+  });
+
+  it("does not claim photos were loaded into model context when modelHasVision is false", async () => {
+    gatewayMocks.callGatewayTool.mockResolvedValue({
+      payload: {
+        photos: [{ base64: "ZmFrZQ==", format: "jpg", width: 800, height: 600 }],
+      },
+    });
+    nodesCameraMocks.parseCameraSnapPayload.mockReturnValueOnce({
+      base64: "ZmFrZQ==",
+      format: "jpg",
+      width: 800,
+      height: 600,
+    });
+    const tool = createNodesTool({ modelHasVision: false });
+
+    const result = await tool.execute("call-no-vision", {
+      action: "photos_latest",
+      node: "macbook",
+    });
+
+    expect(result?.content).toEqual([{ type: "text", text: "Library photo saved to /tmp/camera.jpg." }]);
     expect(result?.details?.media).toMatchObject({ outbound: false });
     expect(extractToolResultMediaArtifact(result)).toBeUndefined();
   });
