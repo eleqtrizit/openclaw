@@ -20,6 +20,23 @@ const createFeishuClientMock = vi.fn((account: { appId?: string } | undefined) =
       })),
     },
   },
+  drive: {
+    permissionMember: {
+      list: vi.fn(async () => ({
+        code: 0,
+        data: {
+          items: [
+            {
+              member_type: "userid",
+              member_id: "member-1",
+              perm: "view",
+              name: "Member One",
+            },
+          ],
+        },
+      })),
+    },
+  },
 }));
 
 vi.mock("./client.js", () => ({
@@ -412,10 +429,20 @@ describe("feishu tool account routing", () => {
     registerFeishuPermTools(api);
 
     const tool = resolveTool("feishu_perm", { agentAccountId: "sales-eu" });
-    await tool.execute("call", { action: "list", token: "tok", type: "file" });
+    const result = await tool.execute("call", { action: "list", token: "tok", type: "file" });
 
     expect(clientAppIdAt(0)).toBe("app-sales");
     expect(clientAppIdAt(0)).not.toBe("app-root");
+    expect(result.details).toEqual({
+      members: [
+        {
+          member_type: "userid",
+          member_id: "member-1",
+          perm: "view",
+          name: "Member One",
+        },
+      ],
+    });
   });
 
   test("perm tool rejects an explicit alias for a punctuation-key disabled family", async () => {
