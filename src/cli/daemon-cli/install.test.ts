@@ -451,6 +451,15 @@ describe("runDaemonInstall", () => {
     });
   });
 
+  it("reinstalls a macOS service that still trusts the legacy /etc/ssl/cert.pem bundle", async () => {
+    loadedService({ environment: { NODE_EXTRA_CA_CERTS: "/etc/ssl/cert.pem" } });
+
+    await expectReinstall();
+    expect(actionState.warnings).toContain(
+      "Gateway service trusts the outdated macOS CA bundle; refreshing the install.",
+    );
+  });
+
   it("does not reuse stale service control env during forced reinstall", async () => {
     loadedService({
       environment: {
