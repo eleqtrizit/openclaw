@@ -60,7 +60,7 @@ The `models` root also owns global model-catalog behavior.
 ```json5
 {
   models: {
-    // Optional. Hosted catalog updates default on.
+    // Optional. Hosted catalog updates require explicit opt-in.
     catalogRefresh: {
       enabled: true,
       // url: "https://catalog.example.com/openclaw/catalog.json",
@@ -76,12 +76,15 @@ The `models` root also owns global model-catalog behavior.
   the absolute `command` when needed, waits for readiness, then sends the model
   request. See [Local model services](/gateway/local-model-services).
 - `models.catalogRefresh.enabled`: controls the hosted model catalog refresh
-  (default: `true`). Set it to `false` to prevent all remote catalog requests;
-  model metadata and pricing then stay at the values shipped in the installed
-  release or declared under `models.providers.*.models[].cost`.
+  (default: `false`). Set it to `true` to receive remote model metadata and
+  pricing updates. Existing installations that relied on the previous default
+  must add this setting to keep receiving them. When disabled, model metadata
+  and pricing stay at the values shipped in the installed release or declared
+  under `models.providers.*.models[].cost`.
 - `models.catalogRefresh.url`: optional HTTPS mirror override (plain HTTP is
   accepted only for explicit localhost testing). The default is
   `https://catalog.openclaw.ai/models/v2/catalog.json`. Mirrors can serve v1, v2, or v3.
+  Configuring a URL opts into refresh unless `enabled` is explicitly `false`.
   The Gateway checks in the background at startup and every six hours. A compatible download
   is prepared and published as one model-and-pricing generation without a
   Gateway restart. Readers retain the current generation until preparation
@@ -118,8 +121,8 @@ native non-token units leave the cost unknown.
 
 Pricing updates ship in the same hosted catalog file as model metadata. The
 retired `models.pricing` toggle is removed automatically by `openclaw doctor
---fix`; use `models.catalogRefresh.enabled: false` when OpenClaw must avoid all
-hosted catalog traffic.
+--fix`; hosted catalog traffic remains off unless refresh is explicitly enabled
+or a custom URL is configured.
 
 ## Discovery
 

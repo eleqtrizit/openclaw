@@ -7,7 +7,11 @@ const RETIRED_DEFAULT_REMOTE_MODEL_CATALOG_URL =
   "https://catalog.openclaw.ai/models/v1/catalog.json";
 
 export function isRemoteModelCatalogRefreshEnabled(config: OpenClawConfig): boolean {
-  return config.models?.catalogRefresh?.enabled !== false;
+  const refresh = config.models?.catalogRefresh;
+  if (refresh?.enabled === false) {
+    return false;
+  }
+  return refresh?.enabled === true || Boolean(refresh?.url?.trim());
 }
 
 export function resolveRemoteCatalogUrl(config: OpenClawConfig): string {

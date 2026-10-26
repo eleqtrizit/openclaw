@@ -34,6 +34,7 @@ const bundle = {
   pricing: { "openai/gpt-external": { input: 2.5, output: 10 } },
 };
 const defaultUrl = "https://catalog.openclaw.ai/models/v2/catalog.json";
+const enabledConfig = { models: { catalogRefresh: { enabled: true } } };
 const mirrorConfig = {
   models: { catalogRefresh: { url: "https://mirror.example.test/catalog.json" } },
 };
@@ -41,9 +42,9 @@ const disabledConfig = { models: { catalogRefresh: { enabled: false } } };
 function stageBundle(value: unknown = bundle, source_url = defaultUrl) {
   read.mockReturnValue({ bundle_json: JSON.stringify(value), source_url });
 }
-const overlay = (config: OpenClawConfig = {}) =>
+const overlay = (config: OpenClawConfig = enabledConfig) =>
   getRemoteModelCatalogProviderOverlay(config, "anthropic");
-const price = () => activeCatalog({})?.pricing?.["openai/gpt-external"];
+const price = () => activeCatalog(enabledConfig)?.pricing?.["openai/gpt-external"];
 const expectPrice = (cost = bundle.pricing["openai/gpt-external"]) =>
   expect(price()).toEqual({ cost, explicit: false });
 function expectPair(
@@ -89,16 +90,16 @@ describe("remote model catalog overlay", () => {
       })),
       upstreamPricing: { "anthropic/current": { input: 9, output: 18, source: "native" } },
     });
-    expect(await readUpdate({})).toBeUndefined();
-    expect(await readRecommendations({}, "anthropic")).toEqual(["retired", "current"]);
+    expect(await readUpdate(enabledConfig)).toBeUndefined();
+    expect(await readRecommendations(enabledConfig, "anthropic")).toEqual(["retired", "current"]);
     expect(await readRecommendations(disabledConfig, "anthropic")).toBeUndefined();
     await prepareStartup();
-    const rank = createModelPickerRecommendationRank({});
+    const rank = createModelPickerRecommendationRank(enabledConfig);
     const current = { provider: "anthropic", id: "current" };
     expect([rank(current), rank({ provider: "anthropic", id: "other" })]).toEqual([1, undefined]);
     expect(overlay()).toBeUndefined();
-    expect(activeCatalog({})?.pricing).toEqual({});
-    expect(activeCatalog({})?.upstreamPricing).toEqual({});
+    expect(activeCatalog(enabledConfig)?.pricing).toEqual({});
+    expect(activeCatalog(enabledConfig)?.upstreamPricing).toEqual({});
     expect(createModelPickerRecommendationRank(disabledConfig)(current)).toBeUndefined();
   });
 
@@ -121,7 +122,7 @@ describe("remote model catalog overlay", () => {
         },
         pricing: { "openai/gpt-external": { input: 5, output: 20 } },
       });
-      const next = expectDefined(await readUpdate({}), "compatible catalog");
+      const next = expectDefined(await readUpdate(enabledConfig), "compatible catalog");
       expectPair([oldModels, oldPrice]);
       expect(publishSnapshot(next, previous)).toBe(true);
       expectPair([[{ id: "downloaded" }], 5]);
@@ -149,7 +150,7 @@ describe("remote model catalog overlay", () => {
             ? change
             : JSON.stringify({ ...bundle, generatedAt: 300, ...change }),
       });
-      const update = readUpdate({});
+      const update = readUpdate(enabledConfig);
       if (error) {
         await expect(update).rejects.toThrow(error);
       } else {
@@ -203,7 +204,7 @@ describe("remote model catalog overlay", () => {
     expect(captureStartup()).toBe(previous);
     expect(read).toHaveBeenCalledOnce();
     stageBundle();
-    const next = expectDefined(await readUpdate({}), "v2 catalog");
+    const next = expectDefined(await readUpdate(enabledConfig), "v2 catalog");
     expect(captureStartup()?.sourceUrl).toBe(v1Default);
     expect(publishSnapshot(next, previous)).toBe(true);
     expect(captureStartup()?.sourceUrl).toBe(defaultUrl);
@@ -216,12 +217,12 @@ describe("remote model catalog overlay", () => {
     expect(await prepareStartup({ env })).toBeNull();
     read.mockReturnValue(valid);
     expect(overlay()).toBeUndefined();
-    expect(activeCatalog({})?.pricing).toBeUndefined();
+    expect(activeCatalog(enabledConfig)?.pricing).toBeUndefined();
   });
 
   it("passes the same startup rows and prices to later workers", async () => {
     await prepareStartup();
-    const expected = { overlay: overlay(), pricing: activeCatalog({})?.pricing };
+    const expected = { overlay: overlay(), pricing: activeCatalog(enabledConfig)?.pricing };
     const worker = new Worker(new URL("./remote-overlay.worker.test-support.ts", import.meta.url), {
       execArgv: ["--import", "tsx"],
     });

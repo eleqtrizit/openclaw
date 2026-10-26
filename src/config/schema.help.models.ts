@@ -11,7 +11,7 @@ export const MODEL_FIELD_HELP: Record<string, string> = {
   "models.catalogRefresh":
     "Controls background updates to the bundled model catalog. Remote rows can update model metadata but cannot change provider endpoints or headers.",
   "models.catalogRefresh.enabled":
-    "Fetch hosted model catalog updates in the background (default: true). Set to false to disable all remote model catalog traffic.",
+    "Fetch hosted model catalog updates in the background (default: false). Set to true to opt in. Configuring a custom catalog URL also opts in unless enabled is false.",
   "models.catalogRefresh.url":
     "Override the hosted model catalog URL for a self-hosted HTTPS mirror (localhost HTTP is allowed for testing). A running Gateway stops using the previous source's catalog and adopts the mirror's at its next catalog check, without restarting.",
   "models.providers.*":

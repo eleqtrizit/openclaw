@@ -4,10 +4,12 @@ import {
   getRemoteModelCatalogProviderOverlay,
 } from "./remote-overlay.js";
 
+const config = { models: { catalogRefresh: { enabled: true } } };
+
 parentPort!.postMessage(
   {
-    overlay: getRemoteModelCatalogProviderOverlay({}, "anthropic"),
-    pricing: getActiveRemoteModelCatalog({})?.pricing,
+    overlay: getRemoteModelCatalogProviderOverlay(config, "anthropic"),
+    pricing: getActiveRemoteModelCatalog(config)?.pricing,
   },
   [],
 );

@@ -255,8 +255,9 @@ ownership through download and write settlement, and refuses while a Gateway
 owns the state directory. A successful result describes the saved download;
 the next Gateway start loads compatible metadata. The running Gateway continues
 to perform its own scheduled catalog refreshes.
-If `models.catalogRefresh.enabled` is `false`, the command reports that refresh
-is disabled.
+Hosted refresh is disabled by default. Set `models.catalogRefresh.enabled: true`
+or configure `models.catalogRefresh.url` before running the command. An explicit
+`enabled: false` keeps refresh disabled even when a URL is configured.
 
 See [Hosted catalog updates](/concepts/models#hosted-catalog-updates) for the
 update lifecycle. The public change history is in

@@ -43,7 +43,7 @@ describe("models refresh", () => {
     await modelsRefreshCommand({}, commandRuntime);
     expect(commandRuntime.log).toHaveBeenLastCalledWith(
       status === "disabled"
-        ? "Remote catalog refresh is disabled (models.catalogRefresh.enabled=false)"
+        ? "Remote catalog refresh is disabled (set models.catalogRefresh.enabled=true to opt in)"
         : expect.stringContaining(`Remote catalog refresh: ${status}`),
     );
   });

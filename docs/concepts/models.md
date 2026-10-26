@@ -516,8 +516,10 @@ even on a model with malformed pricing.
 ### Hosted catalog updates
 
 OpenClaw can refresh the model metadata shipped by installed provider plugins
-without waiting for a new OpenClaw release. The Gateway makes one background
-JSON `GET` at startup and then checks at most every six hours. The request sends
+without waiting for a new OpenClaw release. This is opt-in: set
+`models.catalogRefresh.enabled: true`, or configure a custom
+`models.catalogRefresh.url`. The Gateway then makes one background JSON `GET`
+at startup and checks at most every six hours. The request sends
 no prompts, credentials, model usage, or configuration payload beyond the
 normal HTTP user agent and conditional cache headers.
 
@@ -597,11 +599,11 @@ counts. If a list is unreachable, malformed, or empty, that provider's rows
 publish as authored.
 
 With the Gateway stopped, run `openclaw models refresh` for an immediate metadata
-and pricing check, or
-disable every hosted catalog request with `models.catalogRefresh.enabled:
-false`. When disabled, pricing stays at bundled and explicitly configured
-values. A self-hosted mirror can be selected with an HTTPS
-`models.catalogRefresh.url` (or localhost HTTP for testing). See
+and pricing check after opting in. Disable every hosted catalog request with
+`models.catalogRefresh.enabled: false`. When disabled, pricing stays at bundled
+and explicitly configured values. A self-hosted mirror can be selected with an
+HTTPS `models.catalogRefresh.url` (or localhost HTTP for testing); configuring
+the mirror opts in unless `enabled` is explicitly `false`. See
 [configuration reference](/gateway/config-runtime#models).
 
 Custom providers configured under `models.providers` are written into `models.json` under the agent directory (default `~/.openclaw/agents/<agentId>/agent/models.json`). Provider-plugin catalogs are stored separately as generated plugin-owned catalog shards and load automatically. This file is merged with config by default. Set `models.mode: "replace"` to use only your configured providers.

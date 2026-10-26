@@ -30,7 +30,9 @@ export async function modelsRefreshCommand(
     return;
   }
   if (result.status === "disabled") {
-    runtime.log("Remote catalog refresh is disabled (models.catalogRefresh.enabled=false)");
+    runtime.log(
+      "Remote catalog refresh is disabled (set models.catalogRefresh.enabled=true to opt in)",
+    );
     return;
   }
   runtime.log(

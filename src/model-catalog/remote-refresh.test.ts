@@ -35,12 +35,13 @@ const bundle = {
   providers: { anthropic: {} },
   models: [{ id: "claude-test", provider: "anthropic", pricing: { status: "unknown" } }],
 };
+const enabledConfig = { models: { catalogRefresh: { enabled: true } } };
 
 const options = () => ({ path: path.join(tempDirs.make("openclaw-refresh-"), "state.sqlite") });
 let databaseOptions: ReturnType<typeof options>;
 async function expectRefresh(
   expected: Partial<Awaited<ReturnType<typeof refreshCatalog>>>,
-  config: Parameters<typeof refreshCatalog>[0]["config"] = {},
+  config: Parameters<typeof refreshCatalog>[0]["config"] = enabledConfig,
   force = true,
 ) {
   await expect(refreshCatalog({ config, databaseOptions, force })).resolves.toMatchObject(expected);
@@ -212,6 +213,29 @@ describe("remote model catalog refresh", () => {
     const fetchImpl = mockFetch(async () => new Response(null, { status: 304 }));
     await expectRefresh({ status }, { models: { catalogRefresh: { enabled } } }, force);
     expect(fetchImpl).toHaveBeenCalledTimes(calls);
+  });
+
+  it("keeps hosted catalog refresh disabled until explicitly enabled", async () => {
+    const fetchImpl = mockFetch(async () => new Response(JSON.stringify(bundle)));
+
+    await expectRefresh({ status: "disabled", providers: 0, models: 0 }, {});
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("lets an explicit disable override a configured mirror", async () => {
+    const fetchImpl = mockFetch(async () => new Response(JSON.stringify(bundle)));
+
+    await expectRefresh(
+      { status: "disabled", providers: 0, models: 0 },
+      {
+        models: {
+          catalogRefresh: { enabled: false, url: mirrorConfig().models.catalogRefresh.url },
+        },
+      },
+    );
+
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("stores configured v3 capabilities without changing either released client slot", async () => {

@@ -134,7 +134,7 @@ it("persists accepted catalog writes before closing the state writer", async ({ 
   const refreshing = context.track(
     lifecycle.run((catalogSignal) =>
       refreshRemoteModelCatalog({
-        config: {},
+        config: { models: { catalogRefresh: { enabled: true } } },
         force: true,
         signal: catalogSignal,
         databaseOptions: { env: fixture.state.env },
